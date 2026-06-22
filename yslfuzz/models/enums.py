@@ -1,0 +1,138 @@
+"""Documented YSLFuzz enum values."""
+
+from enum import StrEnum
+
+
+class ApiStyle(StrEnum):
+    REST = "REST"
+    GRAPHQL = "GRAPHQL"
+    UNKNOWN = "UNKNOWN"
+
+
+class Protocol(StrEnum):
+    HTTP = "HTTP"
+    HTTPS = "HTTPS"
+
+
+class HttpMethod(StrEnum):
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    PATCH = "PATCH"
+    DELETE = "DELETE"
+    HEAD = "HEAD"
+    OPTIONS = "OPTIONS"
+
+
+class ParameterLocation(StrEnum):
+    PATH = "PATH"
+    QUERY = "QUERY"
+    HEADER = "HEADER"
+    COOKIE = "COOKIE"
+    BODY = "BODY"
+    GRAPHQL_VARIABLE = "GRAPHQL_VARIABLE"
+    GRAPHQL_ARGUMENT = "GRAPHQL_ARGUMENT"
+
+
+class FieldType(StrEnum):
+    STRING = "STRING"
+    INTEGER = "INTEGER"
+    FLOAT = "FLOAT"
+    BOOLEAN = "BOOLEAN"
+    OBJECT = "OBJECT"
+    ARRAY = "ARRAY"
+    ENUM = "ENUM"
+    UUID = "UUID"
+    EMAIL = "EMAIL"
+    URI = "URI"
+    DATE = "DATE"
+    DATETIME = "DATETIME"
+    PASSWORD = "PASSWORD"
+    TOKEN = "TOKEN"
+    FILE = "FILE"
+    UNKNOWN = "UNKNOWN"
+
+
+class AuthType(StrEnum):
+    NONE = "NONE"
+    BASIC = "BASIC"
+    BEARER = "BEARER"
+    JWT = "JWT"
+    API_KEY = "API_KEY"
+    COOKIE = "COOKIE"
+    OAUTH2 = "OAUTH2"
+    CUSTOM = "CUSTOM"
+
+
+class ConstraintType(StrEnum):
+    REQUIRED = "REQUIRED"
+    MIN_LENGTH = "MIN_LENGTH"
+    MAX_LENGTH = "MAX_LENGTH"
+    MIN_VALUE = "MIN_VALUE"
+    MAX_VALUE = "MAX_VALUE"
+    REGEX = "REGEX"
+    ENUM = "ENUM"
+    FORMAT = "FORMAT"
+    DEFAULT = "DEFAULT"
+    NULLABLE = "NULLABLE"
+    UNIQUE = "UNIQUE"
+    READ_ONLY = "READ_ONLY"
+    WRITE_ONLY = "WRITE_ONLY"
+
+
+class PayloadKind(StrEnum):
+    VALID = "VALID"
+    BOUNDARY = "BOUNDARY"
+    MUTATED = "MUTATED"
+    ATTACK = "ATTACK"
+    INVALID = "INVALID"
+    CONTROL = "CONTROL"
+
+
+class AttackCategory(StrEnum):
+    SQL_INJECTION = "SQL_INJECTION"
+    NOSQL_INJECTION = "NOSQL_INJECTION"
+    COMMAND_INJECTION = "COMMAND_INJECTION"
+    SSRF = "SSRF"
+    XSS = "XSS"
+    MASS_ASSIGNMENT = "MASS_ASSIGNMENT"
+    BROKEN_ACCESS_CONTROL = "BROKEN_ACCESS_CONTROL"
+    GRAPHQL_DEPTH_ABUSE = "GRAPHQL_DEPTH_ABUSE"
+    GRAPHQL_INTROSPECTION_ABUSE = "GRAPHQL_INTROSPECTION_ABUSE"
+    GRAPHQL_BATCHING_ABUSE = "GRAPHQL_BATCHING_ABUSE"
+    AUTH_BYPASS = "AUTH_BYPASS"
+    INPUT_VALIDATION = "INPUT_VALIDATION"
+    INFORMATION_DISCLOSURE = "INFORMATION_DISCLOSURE"
+
+
+class ExecutionStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    TIMEOUT = "TIMEOUT"
+    BLOCKED = "BLOCKED"
+
+
+class FindingSeverity(StrEnum):
+    INFO = "INFO"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class FindingConfidence(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CONFIRMED = "CONFIRMED"
+
+
+class FindingStatus(StrEnum):
+    OPEN = "OPEN"
+    CONFIRMED = "CONFIRMED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    IGNORED = "IGNORED"
+    FIXED = "FIXED"
