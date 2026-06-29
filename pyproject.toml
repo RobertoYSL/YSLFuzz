@@ -10,6 +10,9 @@ dependencies = [
     "pyyaml>=6.0.2",
 ]
 
+[project.scripts]
+yslfuzz = "yslfuzz.cli.main:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.14.1",
@@ -21,6 +24,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv]
+package = true
 
 [tool.ruff]
 line-length = 100
