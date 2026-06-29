@@ -35,9 +35,16 @@ from yslfuzz.models import (
     ScopeDefinition,
     Target,
 )
+from yslfuzz.models.enums import PayloadKind
 from yslfuzz.models.payload import PayloadCandidate
 from yslfuzz.models.schema import Endpoint
-from yslfuzz.payloads import AttackGenerationConfig, AttackPayloadGenerator, PayloadGenerator
+from yslfuzz.payloads import (
+    AttackGenerationConfig,
+    AttackPayloadGenerator,
+    MutationConfig,
+    MutationEngine,
+    PayloadGenerator,
+)
 from yslfuzz.reporting import JsonReporter, MetricsCalculator
 
 
@@ -111,6 +118,68 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable default finding deduplication",
     )
+    scan_parser.add_argument(
+        "--include-boundary-payloads",
+        action="store_true",
+        help="Generate BOUNDARY payloads using MutationEngine",
+    )
+    scan_parser.add_argument(
+        "--include-invalid-payloads",
+        action="store_true",
+        help="Generate INVALID payloads using MutationEngine",
+    )
+    scan_parser.add_argument(
+        "--include-mutated-payloads",
+        action="store_true",
+        help="Generate MUTATED payloads using MutationEngine",
+    )
+    scan_parser.add_argument(
+        "--max-mutations-per-payload",
+        type=int,
+        default=50,
+        help="Maximum mutations per base valid payload",
+    )
+    scan_parser.add_argument(
+        "--max-mutations-per-field",
+        type=int,
+        default=4,
+        help="Maximum mutations per field",
+    )
+    scan_parser.add_argument(
+        "--mutate-sensitive-fields",
+        action="store_true",
+        help="Allow mutation of sensitive fields",
+    )
+    scan_parser.add_argument(
+        "--allow-invalid-enum-values",
+        action="store_true",
+        help="Allow enum values outside schema enum",
+    )
+    scan_parser.add_argument(
+        "--disable-type-confusion",
+        action="store_true",
+        help="Disable type-confusion mutations",
+    )
+    scan_parser.add_argument(
+        "--disable-boundary-values",
+        action="store_true",
+        help="Disable boundary-value mutations",
+    )
+    scan_parser.add_argument(
+        "--disable-null-mutations",
+        action="store_true",
+        help="Disable null mutations",
+    )
+    scan_parser.add_argument(
+        "--execute-mutations",
+        action="store_true",
+        help="Execute BOUNDARY, INVALID and MUTATED payloads",
+    )
+    scan_parser.add_argument(
+        "--i-understand-mutation-execution-is-authorized",
+        action="store_true",
+        help="Required acknowledgement for opt-in mutation execution",
+    )
     scan_parser.set_defaults(func=run_scan_command)
     return parser
 
@@ -139,12 +208,21 @@ def run_scan_command(args: argparse.Namespace) -> int:
         raise ValueError("--timeout must be greater than 0")
     if args.max_attack_requests_per_endpoint < 0:
         raise ValueError("--max-attack-requests-per-endpoint must be greater than or equal to 0")
+    if args.max_mutations_per_payload < 0:
+        raise ValueError("--max-mutations-per-payload must be greater than or equal to 0")
+    if args.max_mutations_per_field < 0:
+        raise ValueError("--max-mutations-per-field must be greater than or equal to 0")
     if args.execute_attacks and not args.i_understand_this_is_authorized:
         raise ValueError("--execute-attacks requires --i-understand-this-is-authorized")
+    if args.execute_mutations and not args.i_understand_mutation_execution_is_authorized:
+        raise ValueError(
+            "--execute-mutations requires --i-understand-mutation-execution-is-authorized"
+        )
 
     api_schema = OpenAPIParser().parse(openapi_path)
     target = _target_from_args(args.base_url, args.allow_destructive, args.max_requests)
     attack_categories = _attack_categories_from_args(args.attack_category)
+    mutation_config = _mutation_config_from_args(args)
     scan = ScanRun(
         project_id="project_cli",
         target_id=target.target_id,
@@ -196,6 +274,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
         baseline_request = request_record
 
         if args.dry_run:
+            mutation_payloads = _mutation_payloads(endpoint, payload, mutation_config)
+            payloads.extend(mutation_payloads)
             if args.include_attack_payloads:
                 payloads.extend(_attack_payloads(endpoint, payload, attack_categories))
             continue
@@ -254,6 +334,25 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 total_raw_findings += analysis_engine.last_total_raw_findings
                 findings.extend(new_findings)
 
+        mutation_payloads = _mutation_payloads(endpoint, payload, mutation_config)
+        payloads.extend(mutation_payloads)
+        if args.execute_mutations:
+            mutation_bundle = _execute_payloads(
+                endpoint=endpoint,
+                payloads=mutation_payloads,
+                target=target,
+                scan_run_id=scan.scan_run_id,
+                request_builder=request_builder,
+                scope_validator=scope_validator,
+                executor=executor,
+                timeout_seconds=args.timeout,
+                max_requests=args.max_requests,
+                current_request_count=len(requests),
+            )
+            requests.extend(mutation_bundle[0])
+            responses.extend(mutation_bundle[1])
+            execution_results.extend(mutation_bundle[2])
+
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
         endpoints=api_schema.endpoints,
@@ -283,6 +382,11 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "total_raw_findings": total_raw_findings,
             "total_deduplicated_findings": len(findings),
             "deduplicate_findings": not bool(args.no_deduplicate_findings),
+            "mutation_execution_enabled": bool(args.execute_mutations and not args.dry_run),
+            "mutation_config": mutation_config.model_dump(mode="json"),
+            "random_seed": mutation_config.random_seed,
+            "max_mutations_per_payload": mutation_config.max_mutations_per_payload,
+            "max_mutations_per_field": mutation_config.max_mutations_per_field,
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
@@ -291,9 +395,15 @@ def run_scan_command(args: argparse.Namespace) -> int:
         output_path=output_path,
         total_endpoints=metrics.total_endpoints,
         payloads_generated=metrics.payloads_generated,
+        valid_payloads_generated=metrics.valid_payloads_generated,
+        boundary_payloads_generated=metrics.boundary_payloads_generated,
+        invalid_payloads_generated=metrics.invalid_payloads_generated,
+        mutated_payloads_generated=metrics.mutated_payloads_generated,
+        attack_payloads_generated=metrics.attack_payloads_generated,
         total_requests=metrics.total_requests,
         successful_requests=metrics.successful_requests,
         failed_requests=metrics.failed_requests,
+        findings_total=metrics.findings_total,
         dry_run=bool(args.dry_run),
     )
     return 0
@@ -347,6 +457,79 @@ def _attack_payloads(
     return AttackPayloadGenerator(config).generate(endpoint, valid_payload)
 
 
+def _mutation_config_from_args(args: argparse.Namespace) -> MutationConfig:
+    enabled_payload_kinds: list[PayloadKind] = []
+    if args.include_boundary_payloads:
+        enabled_payload_kinds.append(PayloadKind.BOUNDARY)
+    if args.include_invalid_payloads:
+        enabled_payload_kinds.append(PayloadKind.INVALID)
+    if args.include_mutated_payloads:
+        enabled_payload_kinds.append(PayloadKind.MUTATED)
+    return MutationConfig(
+        enabled_payload_kinds=enabled_payload_kinds,
+        max_mutations_per_payload=args.max_mutations_per_payload,
+        max_mutations_per_field=args.max_mutations_per_field,
+        include_sensitive_fields=bool(args.mutate_sensitive_fields),
+        deterministic=True,
+        random_seed=0,
+        allow_invalid_enum_values=bool(args.allow_invalid_enum_values),
+        allow_type_confusion=not bool(args.disable_type_confusion),
+        allow_boundary_values=not bool(args.disable_boundary_values),
+        allow_null_mutations=not bool(args.disable_null_mutations),
+    )
+
+
+def _mutation_payloads(
+    endpoint: Endpoint,
+    valid_payload: PayloadCandidate,
+    config: MutationConfig,
+) -> list[PayloadCandidate]:
+    if not config.enabled_payload_kinds:
+        return []
+    return MutationEngine(config).mutate(endpoint, valid_payload)
+
+
+def _execute_payloads(
+    *,
+    endpoint: Endpoint,
+    payloads: Sequence[PayloadCandidate],
+    target: Target,
+    scan_run_id: str,
+    request_builder: RequestBuilder,
+    scope_validator: ScopeValidator,
+    executor: HttpExecutor,
+    timeout_seconds: float,
+    max_requests: int | None,
+    current_request_count: int,
+) -> tuple[list[RequestRecord], list[ResponseRecord], list[ExecutionResult]]:
+    requests: list[RequestRecord] = []
+    responses: list[ResponseRecord] = []
+    execution_results: list[ExecutionResult] = []
+    for payload in payloads:
+        if _request_limit_reached(current_request_count + len(requests), max_requests):
+            break
+        request_record = request_builder.build(
+            endpoint=endpoint,
+            payload=payload,
+            target=target,
+            scan_run_id=scan_run_id,
+        )
+        try:
+            scope_validator.validate(request_record, target.scope)
+        except (DestructiveMethodBlockedError, ScopeViolationError):
+            continue
+        requests.append(request_record)
+        result = executor.execute(
+            request_record,
+            scan_run_id=scan_run_id,
+            timeout_seconds=timeout_seconds,
+        )
+        execution_results.append(result)
+        if result.response_id is not None and result.response_id in executor.response_records:
+            responses.append(executor.response_records[result.response_id])
+    return requests, responses, execution_results
+
+
 def _request_limit_reached(current_request_count: int, max_requests: int | None) -> bool:
     return max_requests is not None and current_request_count >= max_requests
 
@@ -356,17 +539,29 @@ def _print_summary(
     output_path: Path,
     total_endpoints: int,
     payloads_generated: int,
+    valid_payloads_generated: int,
+    boundary_payloads_generated: int,
+    invalid_payloads_generated: int,
+    mutated_payloads_generated: int,
+    attack_payloads_generated: int,
     total_requests: int,
     successful_requests: int,
     failed_requests: int,
+    findings_total: int,
     dry_run: bool,
 ) -> None:
     mode = "dry-run" if dry_run else "executed"
     print(
         "YSLFuzz scan complete "
         f"({mode}): endpoints={total_endpoints}, "
+        f"valid_payloads={valid_payloads_generated}, "
+        f"boundary_payloads={boundary_payloads_generated}, "
+        f"invalid_payloads={invalid_payloads_generated}, "
+        f"mutated_payloads={mutated_payloads_generated}, "
+        f"attack_payloads={attack_payloads_generated}, "
         f"payloads={payloads_generated}, requests={total_requests}, "
         f"successful={successful_requests}, failed={failed_requests}, "
+        f"findings={findings_total}, "
         f"report={output_path}"
     )
 

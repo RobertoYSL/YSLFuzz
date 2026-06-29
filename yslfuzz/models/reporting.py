@@ -18,7 +18,17 @@ class ScanMetrics(YSLFuzzModel):
     timeout_requests: int = 0
     payloads_generated: int = 0
     valid_payloads_generated: int = 0
+    boundary_payloads_generated: int = 0
+    invalid_payloads_generated: int = 0
+    mutated_payloads_generated: int = 0
     attack_payloads_generated: int = 0
+    valid_payloads_executed: int = 0
+    boundary_payloads_executed: int = 0
+    invalid_payloads_executed: int = 0
+    mutated_payloads_executed: int = 0
+    attack_payloads_executed: int = 0
+    skipped_payloads_not_authorized: int = 0
+    skipped_payloads_by_kind: dict[str, int] = Field(default_factory=dict)
     findings_total: int = 0
     findings_by_severity: dict[str, int] = Field(default_factory=dict)
     average_response_time_ms: float = 0.0

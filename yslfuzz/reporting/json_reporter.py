@@ -53,6 +53,10 @@ class JsonReporter:
             responses,
             execution_results,
         )
+        report_metadata["payload_generation_summary"] = self._payload_generation_summary(
+            calculated_metrics,
+            report_metadata,
+        )
         report_metadata["reproducibility"] = self._reproducibility_metadata(
             scan_run=scan_run,
             payloads=payloads,
@@ -87,6 +91,7 @@ class JsonReporter:
         if isinstance(metadata, dict):
             data["target_summary"] = metadata.get("target_summary")
             data["request_response_summary"] = metadata.get("request_response_summary", [])
+            data["payload_generation_summary"] = metadata.get("payload_generation_summary", {})
             data["reproducibility"] = metadata.get("reproducibility", {})
         data["findings"] = self._finding_summaries(data.get("findings", []))
         return cast(dict[str, Any], redact_report_value(data))
@@ -156,6 +161,7 @@ class JsonReporter:
             "timestamp": scan_run.started_at.isoformat(),
             "enabled_attack_categories": metadata.get("enabled_attack_categories", attack_categories),
             "attack_execution_enabled": bool(metadata.get("attack_execution_enabled", False)),
+            "mutation_execution_enabled": bool(metadata.get("mutation_execution_enabled", False)),
             "detectors": [
                 {"name": name, "version": "0.1.0"}
                 for name in detector_names
@@ -165,6 +171,36 @@ class JsonReporter:
             "total_deduplicated_findings": int(
                 metadata.get("total_deduplicated_findings", len(findings))
             ),
+        }
+
+    def _payload_generation_summary(
+        self,
+        metrics: ScanMetrics,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "generated_by_kind": {
+                "VALID": metrics.valid_payloads_generated,
+                "BOUNDARY": metrics.boundary_payloads_generated,
+                "INVALID": metrics.invalid_payloads_generated,
+                "MUTATED": metrics.mutated_payloads_generated,
+                "ATTACK": metrics.attack_payloads_generated,
+            },
+            "executed_by_kind": {
+                "VALID": metrics.valid_payloads_executed,
+                "BOUNDARY": metrics.boundary_payloads_executed,
+                "INVALID": metrics.invalid_payloads_executed,
+                "MUTATED": metrics.mutated_payloads_executed,
+                "ATTACK": metrics.attack_payloads_executed,
+            },
+            "skipped_by_kind": metrics.skipped_payloads_by_kind,
+            "skipped_payloads_not_authorized": metrics.skipped_payloads_not_authorized,
+            "mutation_config": metadata.get("mutation_config", {}),
+            "mutation_execution_enabled": bool(metadata.get("mutation_execution_enabled", False)),
+            "attack_execution_enabled": bool(metadata.get("attack_execution_enabled", False)),
+            "random_seed": metadata.get("random_seed"),
+            "max_mutations_per_payload": metadata.get("max_mutations_per_payload"),
+            "max_mutations_per_field": metadata.get("max_mutations_per_field"),
         }
 
     def _finding_summaries(self, findings: Any) -> Any:
