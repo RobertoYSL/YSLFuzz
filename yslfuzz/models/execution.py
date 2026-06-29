@@ -106,6 +106,19 @@ class ExecutionResult(YSLFuzzModel):
     retry_count: int = 0
 
 
+class WorkflowExecutionResult(YSLFuzzModel):
+    workflow_execution_result_id: str = Field(
+        default_factory=lambda: prefixed_id("workflow_execution_result")
+    )
+    workflow_id: str
+    status: ExecutionStatus
+    request_records: list[RequestRecord] = Field(default_factory=list)
+    response_records: list[ResponseRecord] = Field(default_factory=list)
+    execution_results: list[ExecutionResult] = Field(default_factory=list)
+    known_values: dict[str, Any] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+
+
 from yslfuzz.models.reporting import ScanMetrics  # noqa: E402
 
 ScanRun.model_rebuild()

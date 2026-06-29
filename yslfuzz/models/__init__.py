@@ -34,6 +34,7 @@ from yslfuzz.models.execution import (
     ResponseRecord,
     ScanRun,
     SessionState,
+    WorkflowExecutionResult,
 )
 from yslfuzz.models.payload import GeneratedParameter, Mutation, PayloadCandidate
 from yslfuzz.models.project import Project, ScanConfiguration, ScopeDefinition, Target
@@ -107,6 +108,7 @@ __all__ = [
     "ValueExtractor",
     "VariableBinding",
     "Workflow",
+    "WorkflowExecutionResult",
     "WorkflowStep",
     "YSLFuzzModel",
 ]
