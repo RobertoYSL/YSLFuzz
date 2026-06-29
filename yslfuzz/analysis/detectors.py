@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from urllib.parse import urlparse
 
 from yslfuzz.models.analysis import DetectorResult, Evidence
 from yslfuzz.models.enums import (
@@ -57,6 +58,9 @@ class ResponseDetector(ABC):
             {
                 "detector_name": self.name,
                 "endpoint_id": attack_request.endpoint_id,
+                "endpoint_identity": (
+                    f"{attack_request.method.value} {urlparse(attack_request.url).path or '/'}"
+                ),
                 "payload_id": attack_payload.payload_id,
                 "attack_category": (
                     attack_payload.attack_category.value

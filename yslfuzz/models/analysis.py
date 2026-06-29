@@ -53,6 +53,19 @@ class DetectorResult(YSLFuzzModel):
     reason: str | None = None
 
 
+class FindingFingerprint(YSLFuzzModel):
+    fingerprint_hash: str
+    endpoint_id: str
+    attack_category: AttackCategory
+    detector_id: str
+    affected_parameter: str | None = None
+    affected_location: ParameterLocation | None = None
+    evidence_type: str | None = None
+    status_code_class: str | None = None
+    normalized_title: str
+    components: dict[str, str | None] = Field(default_factory=dict)
+
+
 class SecurityFinding(YSLFuzzModel):
     finding_id: str = Field(default_factory=lambda: prefixed_id("finding"))
     scan_run_id: str

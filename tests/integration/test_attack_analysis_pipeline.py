@@ -27,6 +27,28 @@ from yslfuzz.reporting import JsonReporter
 
 
 def test_attack_analysis_pipeline_with_mock_transport_writes_redacted_report(tmp_path: Path) -> None:
+    report_data, encoded, calls = _run_attack_pipeline(tmp_path / "attack-report.json")
+
+    assert calls
+    assert report_data["findings"]
+    assert report_data["metrics"]["findings_total"] > 0
+    assert report_data["reproducibility"]["total_deduplicated_findings"] == len(report_data["findings"])
+    assert all(finding["fingerprint_hash"] for finding in report_data["findings"])
+    assert "raw-token-value" not in encoded
+    assert "Authorization" not in encoded
+    assert "api_key" not in encoded.lower()
+
+
+def test_repeated_attack_analysis_pipeline_has_stable_finding_fingerprints(tmp_path: Path) -> None:
+    first, _, _ = _run_attack_pipeline(tmp_path / "attack-report-1.json")
+    second, _, _ = _run_attack_pipeline(tmp_path / "attack-report-2.json")
+
+    assert [finding["fingerprint_hash"] for finding in first["findings"]] == [
+        finding["fingerprint_hash"] for finding in second["findings"]
+    ]
+
+
+def _run_attack_pipeline(output_path: Path) -> tuple[dict[str, object], str, list[str]]:
     api_schema = OpenAPIParser().parse(Path("examples/openapi/simple_users_api.yaml"))
     endpoint = next(
         endpoint
@@ -98,13 +120,7 @@ def test_attack_analysis_pipeline_with_mock_transport_writes_redacted_report(tmp
         findings=findings,
         target=target,
     )
-    output = JsonReporter().write_json(report, tmp_path / "attack-report.json")
+    output = JsonReporter().write_json(report, output_path)
     encoded = output.read_text(encoding="utf-8")
     report_data = json.loads(encoded)
-
-    assert calls
-    assert report_data["findings"]
-    assert report_data["metrics"]["findings_total"] > 0
-    assert "raw-token-value" not in encoded
-    assert "Authorization" not in encoded
-    assert "api_key" not in encoded.lower()
+    return report_data, encoded, calls

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from yslfuzz import __version__
 from yslfuzz.models.analysis import SecurityFinding
 from yslfuzz.models.execution import ExecutionResult, RequestRecord, ResponseRecord, ScanRun
 from yslfuzz.models.payload import PayloadCandidate
@@ -52,6 +53,13 @@ class JsonReporter:
             responses,
             execution_results,
         )
+        report_metadata["reproducibility"] = self._reproducibility_metadata(
+            scan_run=scan_run,
+            payloads=payloads,
+            findings=findings,
+            target=target,
+            metadata=report_metadata,
+        )
 
         return Report(
             scan_run_id=scan_run.scan_run_id,
@@ -79,6 +87,8 @@ class JsonReporter:
         if isinstance(metadata, dict):
             data["target_summary"] = metadata.get("target_summary")
             data["request_response_summary"] = metadata.get("request_response_summary", [])
+            data["reproducibility"] = metadata.get("reproducibility", {})
+        data["findings"] = self._finding_summaries(data.get("findings", []))
         return cast(dict[str, Any], redact_report_value(data))
 
     def _target_summary(self, target: Target | None) -> dict[str, Any] | None:
@@ -113,3 +123,60 @@ class JsonReporter:
                 }
             )
         return summaries
+
+    def _reproducibility_metadata(
+        self,
+        scan_run: ScanRun,
+        payloads: Sequence[PayloadCandidate],
+        findings: Sequence[SecurityFinding],
+        target: Target | None,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        attack_categories = sorted(
+            {
+                payload.attack_category.value
+                for payload in payloads
+                if payload.attack_category is not None
+            }
+        )
+        detector_names = sorted(
+            {
+                str(finding.metadata.get("detector_name"))
+                for finding in findings
+                if finding.metadata.get("detector_name") is not None
+            }
+        )
+        seeds = sorted({payload.seed for payload in payloads})
+        return {
+            "yslfuzz_version": __version__,
+            "scan_run_id": scan_run.scan_run_id,
+            "random_seed": seeds[0] if len(seeds) == 1 else seeds,
+            "api_schema_id": scan_run.api_schema_id,
+            "target_id": target.target_id if target is not None else scan_run.target_id,
+            "timestamp": scan_run.started_at.isoformat(),
+            "enabled_attack_categories": metadata.get("enabled_attack_categories", attack_categories),
+            "attack_execution_enabled": bool(metadata.get("attack_execution_enabled", False)),
+            "detectors": [
+                {"name": name, "version": "0.1.0"}
+                for name in detector_names
+            ],
+            "total_detector_results": int(metadata.get("total_detector_results", 0)),
+            "total_raw_findings": int(metadata.get("total_raw_findings", len(findings))),
+            "total_deduplicated_findings": int(
+                metadata.get("total_deduplicated_findings", len(findings))
+            ),
+        }
+
+    def _finding_summaries(self, findings: Any) -> Any:
+        if not isinstance(findings, list):
+            return findings
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            metadata = finding.get("metadata", {})
+            if isinstance(metadata, dict):
+                finding["fingerprint_hash"] = metadata.get("fingerprint_hash")
+                finding["fingerprint"] = metadata.get("fingerprint")
+            evidence = finding.get("evidence", [])
+            finding["evidence_count"] = len(evidence) if isinstance(evidence, list) else 0
+        return findings

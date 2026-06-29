@@ -1,6 +1,12 @@
 """Core data model package for YSLFuzz."""
 
-from yslfuzz.models.analysis import Detector, DetectorResult, Evidence, SecurityFinding
+from yslfuzz.models.analysis import (
+    Detector,
+    DetectorResult,
+    Evidence,
+    FindingFingerprint,
+    SecurityFinding,
+)
 from yslfuzz.models.auth import AuthProfile, AuthScheme, SecretReference
 from yslfuzz.models.base import REDACTED_VALUE, YSLFuzzModel
 from yslfuzz.models.dependency import (
@@ -77,6 +83,7 @@ __all__ = [
     "FieldDefinition",
     "FieldType",
     "FindingConfidence",
+    "FindingFingerprint",
     "FindingSeverity",
     "FindingStatus",
     "GeneratedParameter",

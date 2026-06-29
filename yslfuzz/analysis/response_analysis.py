@@ -26,6 +26,9 @@ class AnalysisEngine:
     ) -> None:
         self.detectors = list(detectors or default_detectors())
         self.finding_builder = finding_builder or FindingBuilder()
+        self.last_total_detector_results = 0
+        self.last_total_raw_findings = 0
+        self.last_total_deduplicated_findings = 0
 
     def analyze(
         self,
@@ -48,6 +51,11 @@ class AnalysisEngine:
                     )
                 )
         findings = self.finding_builder.build(detector_results, scan_run_id=scan_run_id)
+        self.last_total_detector_results = len(detector_results)
+        self.last_total_raw_findings = self.finding_builder.last_raw_finding_count
+        self.last_total_deduplicated_findings = (
+            self.finding_builder.last_deduplicated_finding_count
+        )
         return detector_results, findings
 
 

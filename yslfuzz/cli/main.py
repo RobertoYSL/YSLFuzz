@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from yslfuzz import __version__
-from yslfuzz.analysis import AnalysisEngine
+from yslfuzz.analysis import AnalysisEngine, FindingBuilder
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.execution import (
     AttackExecutionConfig,
@@ -106,6 +106,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for opt-in attack execution",
     )
+    scan_parser.add_argument(
+        "--no-deduplicate-findings",
+        action="store_true",
+        help="Disable default finding deduplication",
+    )
     scan_parser.set_defaults(func=run_scan_command)
     return parser
 
@@ -156,7 +161,11 @@ def run_scan_command(args: argparse.Namespace) -> int:
     scope_validator = ScopeValidator()
     executor = HttpExecutor()
     attack_executor = AttackExecutor(request_builder, scope_validator)
-    analysis_engine = AnalysisEngine()
+    analysis_engine = AnalysisEngine(
+        finding_builder=FindingBuilder(deduplicate=not bool(args.no_deduplicate_findings))
+    )
+    total_detector_results = 0
+    total_raw_findings = 0
 
     for endpoint in api_schema.endpoints:
         if _request_limit_reached(len(requests), args.max_requests):
@@ -241,6 +250,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
                     attack_records,
                     scan_run_id=scan.scan_run_id,
                 )
+                total_detector_results += analysis_engine.last_total_detector_results
+                total_raw_findings += analysis_engine.last_total_raw_findings
                 findings.extend(new_findings)
 
     metrics = MetricsCalculator().calculate(
@@ -266,6 +277,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "dry_run": bool(args.dry_run),
             "include_attack_payloads": bool(args.include_attack_payloads),
             "execute_attacks": bool(args.execute_attacks and not args.dry_run),
+            "attack_execution_enabled": bool(args.execute_attacks and not args.dry_run),
+            "enabled_attack_categories": [category.value for category in attack_categories],
+            "total_detector_results": total_detector_results,
+            "total_raw_findings": total_raw_findings,
+            "total_deduplicated_findings": len(findings),
+            "deduplicate_findings": not bool(args.no_deduplicate_findings),
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
