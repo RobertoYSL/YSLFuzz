@@ -10,8 +10,12 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from yslfuzz import __version__
+from yslfuzz.analysis import AnalysisEngine
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.execution import (
+    AttackExecutionConfig,
+    AttackExecutionPlanner,
+    AttackExecutor,
     DestructiveMethodBlockedError,
     HttpExecutor,
     RequestBuilder,
@@ -21,6 +25,7 @@ from yslfuzz.execution import (
 )
 from yslfuzz.models import (
     ApiStyle,
+    AttackCategory,
     ExecutionResult,
     HttpMethod,
     Protocol,
@@ -31,7 +36,8 @@ from yslfuzz.models import (
     Target,
 )
 from yslfuzz.models.payload import PayloadCandidate
-from yslfuzz.payloads import PayloadGenerator
+from yslfuzz.models.schema import Endpoint
+from yslfuzz.payloads import AttackGenerationConfig, AttackPayloadGenerator, PayloadGenerator
 from yslfuzz.reporting import JsonReporter, MetricsCalculator
 
 
@@ -73,6 +79,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parse schema and generate payloads without executing requests",
     )
     scan_parser.add_argument("--verbose", action="store_true", help="Print additional scan details")
+    scan_parser.add_argument(
+        "--include-attack-payloads",
+        action="store_true",
+        help="Generate safe attack payloads in addition to valid payloads",
+    )
+    scan_parser.add_argument(
+        "--execute-attacks",
+        action="store_true",
+        help="Execute generated attack payloads; requires explicit authorization flag",
+    )
+    scan_parser.add_argument(
+        "--attack-category",
+        action="append",
+        default=[],
+        help="Attack category to include; may be repeated",
+    )
+    scan_parser.add_argument(
+        "--max-attack-requests-per-endpoint",
+        type=int,
+        default=5,
+        help="Maximum attack requests to execute per endpoint",
+    )
+    scan_parser.add_argument(
+        "--i-understand-this-is-authorized",
+        action="store_true",
+        help="Required acknowledgement for opt-in attack execution",
+    )
     scan_parser.set_defaults(func=run_scan_command)
     return parser
 
@@ -99,9 +132,14 @@ def run_scan_command(args: argparse.Namespace) -> int:
         raise ValueError("--max-requests must be greater than or equal to 0")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than 0")
+    if args.max_attack_requests_per_endpoint < 0:
+        raise ValueError("--max-attack-requests-per-endpoint must be greater than or equal to 0")
+    if args.execute_attacks and not args.i_understand_this_is_authorized:
+        raise ValueError("--execute-attacks requires --i-understand-this-is-authorized")
 
     api_schema = OpenAPIParser().parse(openapi_path)
     target = _target_from_args(args.base_url, args.allow_destructive, args.max_requests)
+    attack_categories = _attack_categories_from_args(args.attack_category)
     scan = ScanRun(
         project_id="project_cli",
         target_id=target.target_id,
@@ -113,9 +151,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
     requests: list[RequestRecord] = []
     responses: list[ResponseRecord] = []
     execution_results: list[ExecutionResult] = []
+    findings = []
     request_builder = RequestBuilder()
     scope_validator = ScopeValidator()
     executor = HttpExecutor()
+    attack_executor = AttackExecutor(request_builder, scope_validator)
+    analysis_engine = AnalysisEngine()
 
     for endpoint in api_schema.endpoints:
         if _request_limit_reached(len(requests), args.max_requests):
@@ -128,6 +169,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
 
         payload = PayloadGenerator(seed=0).generate_for_endpoint(endpoint)
         payloads.append(payload)
+        baseline_request: RequestRecord | None = None
+        baseline_response: ResponseRecord | None = None
 
         request_record = request_builder.build(
             endpoint=endpoint,
@@ -141,8 +184,11 @@ def run_scan_command(args: argparse.Namespace) -> int:
             _verbose(args.verbose, f"Blocked destructive endpoint {endpoint.method.value} {endpoint.path}")
             continue
         requests.append(request_record)
+        baseline_request = request_record
 
         if args.dry_run:
+            if args.include_attack_payloads:
+                payloads.extend(_attack_payloads(endpoint, payload, attack_categories))
             continue
 
         result = executor.execute(
@@ -152,7 +198,50 @@ def run_scan_command(args: argparse.Namespace) -> int:
         )
         execution_results.append(result)
         if result.response_id is not None and result.response_id in executor.response_records:
-            responses.append(executor.response_records[result.response_id])
+            baseline_response = executor.response_records[result.response_id]
+            responses.append(baseline_response)
+
+        if args.include_attack_payloads:
+            generated_attacks = _attack_payloads(endpoint, payload, attack_categories)
+            payloads.extend(generated_attacks)
+            if args.execute_attacks and baseline_response is not None and baseline_request is not None:
+                attack_plan = AttackExecutionPlanner(
+                    AttackExecutionConfig(
+                        enabled=True,
+                        enabled_categories=attack_categories,
+                        max_attack_requests_per_endpoint=args.max_attack_requests_per_endpoint,
+                        require_explicit_authorization=True,
+                        allow_sensitive_fields=False,
+                        execute_only_safe_probes=True,
+                        dry_run=bool(args.dry_run),
+                    )
+                ).plan(endpoint, [payload], generated_attacks)
+                attack_bundle = attack_executor.execute_plan(
+                    attack_plan,
+                    endpoint=endpoint,
+                    target=target,
+                    scan_run_id=scan.scan_run_id,
+                    timeout_seconds=args.timeout,
+                    dry_run=bool(args.dry_run),
+                )
+                requests.extend(attack_bundle.request_records)
+                responses.extend(attack_bundle.response_records)
+                execution_results.extend(attack_bundle.execution_results)
+                attack_payload_by_id = {attack.payload_id: attack for attack in generated_attacks}
+                attack_records = [
+                    (attack_request, attack_response, attack_payload_by_id[attack_request.payload_id])
+                    for attack_request in attack_bundle.request_records
+                    for attack_response in attack_bundle.response_records
+                    if attack_response.request_id == attack_request.request_id
+                    and attack_request.payload_id in attack_payload_by_id
+                ]
+                _, new_findings = analysis_engine.analyze(
+                    baseline_request,
+                    baseline_response,
+                    attack_records,
+                    scan_run_id=scan.scan_run_id,
+                )
+                findings.extend(new_findings)
 
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
@@ -161,7 +250,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
         requests=requests,
         responses=responses,
         execution_results=execution_results,
-        findings=[],
+        findings=findings,
     )
     report = JsonReporter().build_report(
         scan,
@@ -170,10 +259,14 @@ def run_scan_command(args: argparse.Namespace) -> int:
         requests=requests,
         responses=responses,
         execution_results=execution_results,
-        findings=[],
+        findings=findings,
         target=target,
         metrics=metrics,
-        metadata={"dry_run": bool(args.dry_run)},
+        metadata={
+            "dry_run": bool(args.dry_run),
+            "include_attack_payloads": bool(args.include_attack_payloads),
+            "execute_attacks": bool(args.execute_attacks and not args.dry_run),
+        },
     )
     output_path = JsonReporter().write_json(report, args.output)
 
@@ -211,6 +304,30 @@ def _target_from_args(base_url: str, allow_destructive: bool, max_requests: int 
             allowed_methods=allowed_methods,
         ),
     )
+
+
+def _attack_categories_from_args(category_names: Sequence[str]) -> list[AttackCategory]:
+    categories: list[AttackCategory] = []
+    for name in category_names:
+        normalized = name.upper()
+        try:
+            categories.append(AttackCategory(normalized))
+        except ValueError as exc:
+            raise ValueError(f"Unsupported --attack-category: {name}") from exc
+    return categories
+
+
+def _attack_payloads(
+    endpoint: Endpoint,
+    valid_payload: PayloadCandidate,
+    categories: Sequence[AttackCategory],
+) -> list[PayloadCandidate]:
+    config = (
+        AttackGenerationConfig(enabled_categories=list(categories))
+        if categories
+        else AttackGenerationConfig()
+    )
+    return AttackPayloadGenerator(config).generate(endpoint, valid_payload)
 
 
 def _request_limit_reached(current_request_count: int, max_requests: int | None) -> bool:

@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from yslfuzz.models.base import REDACTED_VALUE, is_sensitive_key
+from yslfuzz.models.base import REDACTED_VALUE, SENSITIVE_KEYWORDS, is_sensitive_key
 
 
 def redact_report_value(value: Any) -> Any:
@@ -15,6 +15,8 @@ def redact_report_value(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [redact_report_value(item) for item in value]
+    if isinstance(value, str) and any(keyword in value.lower() for keyword in SENSITIVE_KEYWORDS):
+        return REDACTED_VALUE
     return value
 
 

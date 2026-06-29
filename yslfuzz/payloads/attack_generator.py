@@ -137,6 +137,7 @@ class AttackPayloadGenerator:
                 "target_field": target.name,
                 "target_location": target.location.value,
                 "target_field_type": target.field_type.value,
+                "target_sensitive": target.sensitive,
                 "mutation_name": template.name,
                 "safety_label": template.safety_label,
                 "description": template.description,
