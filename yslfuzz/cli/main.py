@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from yslfuzz import __version__
-from yslfuzz.analysis import AnalysisEngine, FindingBuilder
+from yslfuzz.analysis import AnalysisConfig, AnalysisEngine, FindingBuilder
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.execution import (
     AttackExecutionConfig,
@@ -27,6 +27,7 @@ from yslfuzz.models import (
     ApiStyle,
     AttackCategory,
     ExecutionResult,
+    FindingConfidence,
     HttpMethod,
     Protocol,
     RequestRecord,
@@ -117,6 +118,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-deduplicate-findings",
         action="store_true",
         help="Disable default finding deduplication",
+    )
+    scan_parser.add_argument(
+        "--disable-detector",
+        action="append",
+        default=[],
+        help="Disable one analysis detector by stable name or detector id; may be repeated",
+    )
+    scan_parser.add_argument(
+        "--analysis-min-confidence",
+        default=None,
+        help="Only emit detector results and findings at or above LOW, MEDIUM, HIGH or CONFIRMED",
     )
     scan_parser.add_argument(
         "--include-boundary-payloads",
@@ -223,6 +235,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
     target = _target_from_args(args.base_url, args.allow_destructive, args.max_requests)
     attack_categories = _attack_categories_from_args(args.attack_category)
     mutation_config = _mutation_config_from_args(args)
+    analysis_config = _analysis_config_from_args(args)
     scan = ScanRun(
         project_id="project_cli",
         target_id=target.target_id,
@@ -240,6 +253,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
     executor = HttpExecutor()
     attack_executor = AttackExecutor(request_builder, scope_validator)
     analysis_engine = AnalysisEngine(
+        config=analysis_config,
         finding_builder=FindingBuilder(deduplicate=not bool(args.no_deduplicate_findings))
     )
     total_detector_results = 0
@@ -352,6 +366,24 @@ def run_scan_command(args: argparse.Namespace) -> int:
             requests.extend(mutation_bundle[0])
             responses.extend(mutation_bundle[1])
             execution_results.extend(mutation_bundle[2])
+            if baseline_response is not None and baseline_request is not None:
+                mutation_payload_by_id = {payload.payload_id: payload for payload in mutation_payloads}
+                mutation_records = [
+                    (mutation_request, mutation_response, mutation_payload_by_id[mutation_request.payload_id])
+                    for mutation_request in mutation_bundle[0]
+                    for mutation_response in mutation_bundle[1]
+                    if mutation_response.request_id == mutation_request.request_id
+                    and mutation_request.payload_id in mutation_payload_by_id
+                ]
+                _, new_findings = analysis_engine.analyze(
+                    baseline_request,
+                    baseline_response,
+                    mutation_records,
+                    scan_run_id=scan.scan_run_id,
+                )
+                total_detector_results += analysis_engine.last_total_detector_results
+                total_raw_findings += analysis_engine.last_total_raw_findings
+                findings.extend(new_findings)
 
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
@@ -382,6 +414,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "total_raw_findings": total_raw_findings,
             "total_deduplicated_findings": len(findings),
             "deduplicate_findings": not bool(args.no_deduplicate_findings),
+            "analysis_config": analysis_config.summary(),
+            "analysis_detectors": analysis_engine.detector_metadata(),
             "mutation_execution_enabled": bool(args.execute_mutations and not args.dry_run),
             "mutation_config": mutation_config.model_dump(mode="json"),
             "random_seed": mutation_config.random_seed,
@@ -476,6 +510,21 @@ def _mutation_config_from_args(args: argparse.Namespace) -> MutationConfig:
         allow_type_confusion=not bool(args.disable_type_confusion),
         allow_boundary_values=not bool(args.disable_boundary_values),
         allow_null_mutations=not bool(args.disable_null_mutations),
+    )
+
+
+def _analysis_config_from_args(args: argparse.Namespace) -> AnalysisConfig:
+    confidence = None
+    if args.analysis_min_confidence is not None:
+        try:
+            confidence = FindingConfidence(args.analysis_min_confidence.upper())
+        except ValueError as exc:
+            raise ValueError(
+                "--analysis-min-confidence must be one of LOW, MEDIUM, HIGH or CONFIRMED"
+            ) from exc
+    return AnalysisConfig(
+        disabled_detectors=list(args.disable_detector),
+        minimum_confidence=confidence,
     )
 
 

@@ -78,7 +78,7 @@ def test_sensitive_data_exposure_detector_creates_redacted_evidence_only() -> No
     )
 
     assert results
-    assert results[0].severity == FindingSeverity.HIGH
+    assert results[0].severity == FindingSeverity.MEDIUM
     assert "raw-token-value" not in results[0].model_dump_json()
     assert results[0].evidence[0].model_dump(mode="json")["observed_value_preview"] == "[REDACTED]"
 

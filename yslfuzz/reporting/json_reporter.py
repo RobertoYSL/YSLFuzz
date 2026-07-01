@@ -57,6 +57,11 @@ class JsonReporter:
             calculated_metrics,
             report_metadata,
         )
+        report_metadata["analysis_summary"] = self._analysis_summary(
+            findings,
+            report_metadata,
+            calculated_metrics,
+        )
         report_metadata["reproducibility"] = self._reproducibility_metadata(
             scan_run=scan_run,
             payloads=payloads,
@@ -92,6 +97,7 @@ class JsonReporter:
             data["target_summary"] = metadata.get("target_summary")
             data["request_response_summary"] = metadata.get("request_response_summary", [])
             data["payload_generation_summary"] = metadata.get("payload_generation_summary", {})
+            data["analysis_summary"] = metadata.get("analysis_summary", {})
             data["reproducibility"] = metadata.get("reproducibility", {})
         data["findings"] = self._finding_summaries(data.get("findings", []))
         return cast(dict[str, Any], redact_report_value(data))
@@ -163,7 +169,7 @@ class JsonReporter:
             "attack_execution_enabled": bool(metadata.get("attack_execution_enabled", False)),
             "mutation_execution_enabled": bool(metadata.get("mutation_execution_enabled", False)),
             "detectors": [
-                {"name": name, "version": "0.1.0"}
+                {"name": name, "version": self._detector_version(name, findings)}
                 for name in detector_names
             ],
             "total_detector_results": int(metadata.get("total_detector_results", 0)),
@@ -171,6 +177,52 @@ class JsonReporter:
             "total_deduplicated_findings": int(
                 metadata.get("total_deduplicated_findings", len(findings))
             ),
+        }
+
+    def _analysis_summary(
+        self,
+        findings: Sequence[SecurityFinding],
+        metadata: dict[str, Any],
+        metrics: ScanMetrics,
+    ) -> dict[str, Any]:
+        by_detector: dict[str, int] = {}
+        detectors: dict[str, dict[str, str | None]] = {}
+        for finding in findings:
+            detector_name = finding.metadata.get("detector_name")
+            if detector_name is None:
+                continue
+            name = str(detector_name)
+            by_detector[name] = by_detector.get(name, 0) + 1
+            detectors[name] = {
+                "detector_id": self._optional_str(finding.metadata.get("detector_id")),
+                "name": name,
+                "version": self._optional_str(finding.metadata.get("detector_version")),
+            }
+
+        configured_detectors = metadata.get("analysis_detectors")
+        if isinstance(configured_detectors, list):
+            for item in configured_detectors:
+                if not isinstance(item, dict) or item.get("name") is None:
+                    continue
+                name = str(item["name"])
+                detectors.setdefault(
+                    name,
+                    {
+                        "detector_id": self._optional_str(item.get("detector_id")),
+                        "name": name,
+                        "version": self._optional_str(item.get("version")),
+                    },
+                )
+
+        return {
+            "detectors": [detectors[name] for name in sorted(detectors)],
+            "detector_result_count": int(metadata.get("total_detector_results", 0)),
+            "finding_count_by_detector": {
+                name: by_detector[name]
+                for name in sorted(by_detector)
+            },
+            "finding_count_by_severity": metrics.findings_by_severity,
+            "analysis_configuration": metadata.get("analysis_config", {}),
         }
 
     def _payload_generation_summary(
@@ -202,6 +254,20 @@ class JsonReporter:
             "max_mutations_per_payload": metadata.get("max_mutations_per_payload"),
             "max_mutations_per_field": metadata.get("max_mutations_per_field"),
         }
+
+    def _detector_version(
+        self,
+        detector_name: str,
+        findings: Sequence[SecurityFinding],
+    ) -> str | None:
+        for finding in findings:
+            if finding.metadata.get("detector_name") == detector_name:
+                version = finding.metadata.get("detector_version")
+                return str(version) if version is not None else "0.1.0"
+        return "0.1.0"
+
+    def _optional_str(self, value: object) -> str | None:
+        return str(value) if value is not None else None
 
     def _finding_summaries(self, findings: Any) -> Any:
         if not isinstance(findings, list):

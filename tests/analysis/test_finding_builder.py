@@ -23,6 +23,26 @@ def test_finding_builder_deduplicates_findings_by_default() -> None:
     assert findings[0].metadata["deduplicated_count"] == 2
 
 
+def test_finding_builder_adds_detector_specific_recommendation() -> None:
+    finding = FindingBuilder(deduplicate=False).build(
+        [_result("request_1", "response_1")],
+        scan_run_id="scan_1",
+    )[0]
+
+    assert finding.title == "Status Code Anomaly"
+    assert "status codes" in str(finding.recommendation)
+
+
+def test_finding_builder_preserves_request_and_response_ids() -> None:
+    finding = FindingBuilder(deduplicate=False).build(
+        [_result("request_1", "response_1")],
+        scan_run_id="scan_1",
+    )[0]
+
+    assert finding.request_ids == ["request_1"]
+    assert finding.response_ids == ["response_1"]
+
+
 def _result(request_id: str, response_id: str) -> DetectorResult:
     return DetectorResult(
         detector_id="detector_status_code_anomaly",

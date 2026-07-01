@@ -1,4 +1,4 @@
-from yslfuzz.analysis import AnalysisEngine, FindingBuilder, ReflectionDetector
+from yslfuzz.analysis import AnalysisConfig, AnalysisEngine, FindingBuilder, ReflectionDetector
 from yslfuzz.models import (
     AttackCategory,
     DetectorResult,
@@ -17,6 +17,46 @@ def test_analysis_engine_produces_detector_results() -> None:
     detector_results, findings = AnalysisEngine(detectors=[ReflectionDetector()]).analyze(
         _request("baseline", "payload_valid"),
         _response("baseline", 200),
+        [(_request("attack", "payload_attack"), _response("attack", 200, "yslfuzz_probe"), _payload())],
+        scan_run_id="scan_1",
+    )
+
+    assert detector_results
+    assert findings
+
+
+def test_analysis_engine_respects_disabled_detectors() -> None:
+    detector_results, findings = AnalysisEngine(
+        config=AnalysisConfig(disabled_detectors=["ReflectionDetector"])
+    ).analyze(
+        _request("baseline", "payload_valid"),
+        _response("baseline", 200),
+        [(_request("attack", "payload_attack"), _response("attack", 200, "yslfuzz_probe"), _payload())],
+        scan_run_id="scan_1",
+    )
+
+    assert all(result.metadata["detector_name"] != "ReflectionDetector" for result in detector_results)
+    assert all(finding.metadata["detector_name"] != "ReflectionDetector" for finding in findings)
+
+
+def test_analysis_engine_respects_minimum_confidence() -> None:
+    detector_results, findings = AnalysisEngine(
+        config=AnalysisConfig(minimum_confidence=FindingConfidence.MEDIUM),
+        detectors=[ReflectionDetector()],
+    ).analyze(
+        _request("baseline", "payload_valid"),
+        _response("baseline", 200),
+        [(_request("attack", "payload_attack"), _response("attack", 200, "yslfuzz_probe"), _payload())],
+        scan_run_id="scan_1",
+    )
+
+    assert detector_results == []
+    assert findings == []
+
+
+def test_analysis_engine_analyze_records_uses_endpoint_baselines() -> None:
+    detector_results, findings = AnalysisEngine(detectors=[ReflectionDetector()]).analyze_records(
+        [(_request("baseline", "payload_valid"), _response("baseline", 200))],
         [(_request("attack", "payload_attack"), _response("attack", 200, "yslfuzz_probe"), _payload())],
         scan_run_id="scan_1",
     )
