@@ -9,6 +9,13 @@ from yslfuzz.models.analysis import (
 )
 from yslfuzz.models.auth import AuthProfile, AuthScheme, SecretReference
 from yslfuzz.models.base import REDACTED_VALUE, YSLFuzzModel
+from yslfuzz.models.benchmark import (
+    BenchmarkArtifact,
+    BenchmarkConfig,
+    BenchmarkJobConfig,
+    BenchmarkJobResult,
+    BenchmarkRunResult,
+)
 from yslfuzz.models.dependency import (
     DependencyEdge,
     DependencyGraph,
@@ -74,6 +81,11 @@ __all__ = [
     "AuthProfile",
     "AuthScheme",
     "AuthType",
+    "BenchmarkArtifact",
+    "BenchmarkConfig",
+    "BenchmarkJobConfig",
+    "BenchmarkJobResult",
+    "BenchmarkRunResult",
     "Constraint",
     "ConstraintType",
     "DependencyEdge",

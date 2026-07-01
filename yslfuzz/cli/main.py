@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from yslfuzz import __version__
 from yslfuzz.analysis import AnalysisConfig, AnalysisEngine, FindingBuilder
+from yslfuzz.benchmark import BenchmarkConfigLoader, BenchmarkRunner
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.evaluation import (
     EvaluationExporter,
@@ -212,6 +213,35 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--ground-truth", required=True, help="Ground-truth JSON/YAML file")
     evaluate_parser.add_argument("--output-dir", required=True, help="Evaluation output directory")
     evaluate_parser.set_defaults(func=run_evaluate_command)
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Run a benchmark configuration",
+        description="Run a benchmark configuration",
+    )
+    benchmark_parser.add_argument("--config", required=True, help="Benchmark JSON/YAML config path")
+    benchmark_parser.add_argument("--output-dir", required=True, help="Benchmark output directory")
+    benchmark_parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="Stop after the first failed benchmark job",
+    )
+    benchmark_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Force dry-run mode for every benchmark job",
+    )
+    benchmark_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow writing into an existing benchmark output directory",
+    )
+    benchmark_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print benchmark job progress",
+    )
+    benchmark_parser.set_defaults(func=run_benchmark_command)
     return parser
 
 
@@ -497,6 +527,26 @@ def run_evaluate_command(args: argparse.Namespace) -> int:
         f"output_dir={paths['json'].parent}"
     )
     return 0
+
+
+def run_benchmark_command(args: argparse.Namespace) -> int:
+    """Run the benchmark command and return a process exit code."""
+    config = BenchmarkConfigLoader().load(args.config)
+    result = BenchmarkRunner(
+        config,
+        args.output_dir,
+        fail_fast=bool(args.fail_fast),
+        force_dry_run=bool(args.dry_run),
+        overwrite=bool(args.overwrite),
+        verbose=bool(args.verbose),
+    ).run()
+    failed_jobs = sum(1 for job in result.jobs if job.status == "failed")
+    print(
+        "YSLFuzz benchmark complete: "
+        f"benchmark_id={result.benchmark_id}, jobs={len(result.jobs)}, "
+        f"failed={failed_jobs}, status={result.status}, output_dir={args.output_dir}"
+    )
+    return 1 if result.status == "failed" else 0
 
 
 def _load_report_dict(path: Path) -> dict[str, object]:

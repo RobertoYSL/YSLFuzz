@@ -1,0 +1,37 @@
+{
+  "benchmark_id": "simple_users_benchmark",
+  "benchmark_name": "Simple Users Safe Benchmark",
+  "benchmark_version": "0.1.0",
+  "description": "Safe dry-run benchmark configuration for the example simple users OpenAPI schema.",
+  "random_seed": 0,
+  "output_naming_strategy": "job_id",
+  "jobs": [
+    {
+      "job_id": "simple_users_dry_run",
+      "job_name": "Simple Users Dry Run",
+      "target_name": "simple-users-api",
+      "base_url": "http://localhost:8000",
+      "openapi_path": "examples/openapi/simple_users_api.yaml",
+      "ground_truth_path": "examples/evaluation/simple_users_ground_truth.json",
+      "output_subdir": "simple_users_dry_run",
+      "max_requests": 1,
+      "timeout": 5.0,
+      "dry_run": true,
+      "allow_destructive": false,
+      "include_boundary_payloads": false,
+      "include_invalid_payloads": false,
+      "include_mutated_payloads": false,
+      "include_attack_payloads": false,
+      "execute_mutations": false,
+      "execute_attacks": false,
+      "enabled_attack_categories": [],
+      "max_mutations_per_payload": 10,
+      "max_mutations_per_field": 2,
+      "max_attack_requests_per_endpoint": 1,
+      "notes": "Dry-run only; no requests are sent.",
+      "metadata": {
+        "safe_for_local_tests": true
+      }
+    }
+  ]
+}
