@@ -11,20 +11,33 @@ from yslfuzz.models.execution import ExecutionResult, RequestRecord, ResponseRec
 from yslfuzz.models.payload import PayloadCandidate
 from yslfuzz.models.project import Target
 from yslfuzz.models.reporting import Report, ReportSummary, ScanMetrics
-from yslfuzz.models.schema import Endpoint
+from yslfuzz.models.schema import ApiSchema, Endpoint
+from yslfuzz.reporting.finding_enricher import FindingEnricher
 from yslfuzz.reporting.metrics import MetricsCalculator
 from yslfuzz.reporting.redaction import redact_report_value
+from yslfuzz.reporting.summaries import ReportSummaryBuilder
+
+
+REPORT_SCHEMA_VERSION = "1.0"
 
 
 class JsonReporter:
     """Build and export redacted JSON reports."""
 
-    def __init__(self, metrics_calculator: MetricsCalculator | None = None) -> None:
+    def __init__(
+        self,
+        metrics_calculator: MetricsCalculator | None = None,
+        finding_enricher: FindingEnricher | None = None,
+        summary_builder: ReportSummaryBuilder | None = None,
+    ) -> None:
         self._metrics_calculator = metrics_calculator or MetricsCalculator()
+        self._finding_enricher = finding_enricher or FindingEnricher()
+        self._summary_builder = summary_builder or ReportSummaryBuilder()
 
     def build_report(
         self,
         scan_run: ScanRun,
+        api_schema: ApiSchema | None = None,
         endpoints: Sequence[Endpoint] = (),
         payloads: Sequence[PayloadCandidate] = (),
         requests: Sequence[RequestRecord] = (),
@@ -37,9 +50,10 @@ class JsonReporter:
         metrics: ScanMetrics | None = None,
     ) -> Report:
         """Build a Report model with calculated metrics and report metadata."""
+        effective_endpoints = tuple(api_schema.endpoints) if api_schema is not None else tuple(endpoints)
         calculated_metrics = metrics or self._metrics_calculator.calculate(
             scan_run_id=scan_run.scan_run_id,
-            endpoints=endpoints,
+            endpoints=effective_endpoints,
             payloads=payloads,
             requests=requests,
             responses=responses,
@@ -47,6 +61,8 @@ class JsonReporter:
             findings=findings,
         )
         report_metadata = dict(metadata or {})
+        report_metadata["report_schema_version"] = REPORT_SCHEMA_VERSION
+        report_metadata["redaction_enabled"] = redaction_enabled
         report_metadata["target_summary"] = self._target_summary(target)
         report_metadata["request_response_summary"] = self._request_response_summary(
             requests,
@@ -57,20 +73,43 @@ class JsonReporter:
             calculated_metrics,
             report_metadata,
         )
-        report_metadata["analysis_summary"] = self._analysis_summary(
+        detector_metadata = self._detector_metadata(report_metadata)
+        enriched_findings = self._finding_enricher.enrich(
             findings,
-            report_metadata,
-            calculated_metrics,
-        )
-        report_metadata["reproducibility"] = self._reproducibility_metadata(
-            scan_run=scan_run,
+            api_schema=api_schema,
+            endpoints=effective_endpoints,
             payloads=payloads,
+            request_records=requests,
+            response_records=responses,
+            detector_metadata=detector_metadata,
+        )
+        report_metadata["enriched_findings"] = enriched_findings
+        summaries = self._summary_builder.build(
+            scan_run=scan_run,
+            endpoints=effective_endpoints,
+            api_schema=api_schema,
+            payloads=payloads,
+            requests=requests,
+            responses=responses,
+            execution_results=execution_results,
             findings=findings,
+            metrics=calculated_metrics,
             target=target,
             metadata=report_metadata,
+            detector_metadata=detector_metadata,
         )
+        report_metadata["summaries"] = summaries
+        report_metadata["severity_summary"] = summaries["severity_summary"]
+        report_metadata["confidence_summary"] = summaries["confidence_summary"]
+        report_metadata["attack_category_summary"] = summaries["attack_category_summary"]
+        report_metadata["detector_summary"] = summaries["detector_summary"]
+        report_metadata["endpoint_summary"] = summaries["endpoint_summary"]
+        report_metadata["payload_summary"] = summaries["payload_summary"]
+        report_metadata["analysis_summary"] = summaries["analysis_summary"]
+        report_metadata["reproducibility"] = summaries["reproducibility"]
+        report_metadata["redaction"] = summaries["redaction"]
 
-        return Report(
+        report = Report(
             scan_run_id=scan_run.scan_run_id,
             summary=ReportSummary(),
             findings=list(findings),
@@ -78,6 +117,9 @@ class JsonReporter:
             redaction_enabled=redaction_enabled,
             metadata=report_metadata,
         )
+        report.metadata["reproducibility"]["generated_at"] = report.generated_at.isoformat()
+        report.metadata["summaries"]["reproducibility"]["generated_at"] = report.generated_at.isoformat()
+        return report
 
     def to_json(self, report: Report, indent: int | None = 2) -> str:
         """Serialize a report to a redacted JSON string."""
@@ -93,12 +135,24 @@ class JsonReporter:
         """Convert a report to the JSON export dictionary."""
         data = report.model_dump(mode="json")
         metadata = data.get("metadata", {})
+        data["report_schema_version"] = REPORT_SCHEMA_VERSION
         if isinstance(metadata, dict):
             data["target_summary"] = metadata.get("target_summary")
             data["request_response_summary"] = metadata.get("request_response_summary", [])
             data["payload_generation_summary"] = metadata.get("payload_generation_summary", {})
+            data["payload_summary"] = metadata.get("payload_summary", {})
             data["analysis_summary"] = metadata.get("analysis_summary", {})
+            data["severity_summary"] = metadata.get("severity_summary", {})
+            data["confidence_summary"] = metadata.get("confidence_summary", {})
+            data["attack_category_summary"] = metadata.get("attack_category_summary", {})
+            data["detector_summary"] = metadata.get("detector_summary", {})
+            data["endpoint_summary"] = metadata.get("endpoint_summary", [])
+            data["summaries"] = metadata.get("summaries", {})
             data["reproducibility"] = metadata.get("reproducibility", {})
+            data["redaction"] = metadata.get("redaction", {})
+            data["redaction_metadata"] = metadata.get("redaction", {})
+            data["enriched_findings"] = metadata.get("enriched_findings", [])
+            data["findings"] = metadata.get("enriched_findings", data.get("findings", []))
         data["findings"] = self._finding_summaries(data.get("findings", []))
         return cast(dict[str, Any], redact_report_value(data))
 
@@ -178,6 +232,12 @@ class JsonReporter:
                 metadata.get("total_deduplicated_findings", len(findings))
             ),
         }
+
+    def _detector_metadata(self, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+        value = metadata.get("analysis_detectors")
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, dict)]
 
     def _analysis_summary(
         self,
@@ -277,8 +337,10 @@ class JsonReporter:
                 continue
             metadata = finding.get("metadata", {})
             if isinstance(metadata, dict):
-                finding["fingerprint_hash"] = metadata.get("fingerprint_hash")
-                finding["fingerprint"] = metadata.get("fingerprint")
+                finding["fingerprint_hash"] = finding.get("fingerprint_hash") or metadata.get(
+                    "fingerprint_hash"
+                )
+                finding["fingerprint"] = finding.get("fingerprint") or metadata.get("fingerprint")
             evidence = finding.get("evidence", [])
             finding["evidence_count"] = len(evidence) if isinstance(evidence, list) else 0
         return findings

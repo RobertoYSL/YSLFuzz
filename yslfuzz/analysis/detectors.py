@@ -547,7 +547,7 @@ class BasicAuthorizationBypassDetector(ResponseDetector):
     """Detect basic access-control anomalies from paired auth-related records."""
 
     detector_id = "detector_basic_authorization_bypass"
-    name = "BasicAuthorizationBypassDetector"
+    name = "BasicAuthzBypassDetector"
 
     def detect(
         self,
