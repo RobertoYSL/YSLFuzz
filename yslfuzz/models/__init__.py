@@ -33,6 +33,13 @@ from yslfuzz.models.enums import (
     PayloadKind,
     Protocol,
 )
+from yslfuzz.models.evaluation import (
+    EvaluationMetrics,
+    EvaluationReport,
+    ExpectedVulnerability,
+    FindingMatch,
+    GroundTruthLab,
+)
 from yslfuzz.models.execution import (
     ExecutionPlan,
     ExecutionResult,
@@ -80,13 +87,18 @@ __all__ = [
     "ExecutionPlan",
     "ExecutionResult",
     "ExecutionStatus",
+    "EvaluationMetrics",
+    "EvaluationReport",
+    "ExpectedVulnerability",
     "FieldDefinition",
     "FieldType",
+    "FindingMatch",
     "FindingConfidence",
     "FindingFingerprint",
     "FindingSeverity",
     "FindingStatus",
     "GeneratedParameter",
+    "GroundTruthLab",
     "HttpMethod",
     "Mutation",
     "Parameter",

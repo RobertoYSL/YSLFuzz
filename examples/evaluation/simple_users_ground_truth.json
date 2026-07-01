@@ -1,0 +1,30 @@
+{
+  "lab_id": "simple_users_mock_lab",
+  "lab_name": "Simple Users API Mock Evaluation Lab",
+  "lab_version": "0.1.0",
+  "target_name": "simple-users-api",
+  "target_base_url": "http://localhost:8000",
+  "api_style": "REST",
+  "expected_vulnerabilities": [
+    {
+      "ground_truth_id": "gt_simple_users_status_500",
+      "endpoint_path": "/users",
+      "endpoint_method": "GET",
+      "attack_category": "SQL_INJECTION",
+      "vulnerability_type": "status_code_anomaly",
+      "expected_severity": "MEDIUM",
+      "affected_parameter": "name",
+      "affected_location": "QUERY",
+      "cwe": "CWE-20",
+      "owasp_api_category": "API8:2023 Security Misconfiguration",
+      "description": "Mock transport can simulate a server error for controlled attack-analysis tests.",
+      "tags": ["mock", "analysis", "non-production"]
+    }
+  ],
+  "expected_endpoints": ["/users"],
+  "notes": "This file is for deterministic tests and thesis export examples. It does not assert that the example OpenAPI service is a real vulnerable application.",
+  "metadata": {
+    "source": "yslfuzz examples",
+    "safe_for_local_tests": true
+  }
+}
