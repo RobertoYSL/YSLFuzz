@@ -6,12 +6,14 @@ import argparse
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
 from yslfuzz import __version__
 from yslfuzz.analysis import AnalysisConfig, AnalysisEngine, FindingBuilder
+from yslfuzz.auth import AuthInjector, AuthResolutionError, AuthResolver
 from yslfuzz.benchmark import BenchmarkConfigLoader, BenchmarkRunner
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.evaluation import (
@@ -31,15 +33,20 @@ from yslfuzz.execution import (
     ScopeValidator,
     ScopeViolationError,
 )
+from yslfuzz.labs import LabCatalog
 from yslfuzz.models import (
     ApiStyle,
     AttackCategory,
+    AuthCredentialRef,
+    AuthProfile,
+    AuthType,
     ExecutionResult,
     FindingConfidence,
     HttpMethod,
     Protocol,
     RequestRecord,
     ResponseRecord,
+    ResolvedAuthMaterial,
     ScanRun,
     ScopeDefinition,
     Target,
@@ -202,6 +209,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for opt-in mutation execution",
     )
+    scan_parser.add_argument(
+        "--auth-bearer-env",
+        default=None,
+        help="Use a bearer token from ENV_VAR",
+    )
+    scan_parser.add_argument(
+        "--auth-api-key-env",
+        default=None,
+        help="Use an API key from ENV_VAR",
+    )
+    scan_parser.add_argument(
+        "--auth-api-key-header",
+        default="X-API-Key",
+        help="Header name for --auth-api-key-env",
+    )
+    scan_parser.add_argument(
+        "--auth-cookie-env",
+        default=None,
+        help="Use a cookie value from ENV_VAR",
+    )
+    scan_parser.add_argument(
+        "--auth-cookie-name",
+        default="session",
+        help="Cookie name for --auth-cookie-env",
+    )
+    scan_parser.add_argument(
+        "--auth-header",
+        action="append",
+        default=[],
+        help="Custom auth header mapping HEADER_NAME:ENV_VAR; may be repeated",
+    )
     scan_parser.set_defaults(func=run_scan_command)
 
     evaluate_parser = subparsers.add_parser(
@@ -242,6 +280,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print benchmark job progress",
     )
     benchmark_parser.set_defaults(func=run_benchmark_command)
+
+    labs_parser = subparsers.add_parser(
+        "labs",
+        help="List and inspect local lab packs",
+        description="List and inspect local lab packs without running scans or benchmarks",
+    )
+    labs_parser.add_argument(
+        "--root",
+        default=None,
+        help="Lab catalog root directory; defaults to examples/labs",
+    )
+    labs_subparsers = labs_parser.add_subparsers(dest="labs_command", required=True)
+    labs_list_parser = labs_subparsers.add_parser("list", help="List available lab packs")
+    labs_list_parser.set_defaults(func=run_labs_command)
+    labs_show_parser = labs_subparsers.add_parser("show", help="Show one lab pack manifest")
+    labs_show_parser.add_argument("--lab", required=True, help="Lab ID to show")
+    labs_show_parser.set_defaults(func=run_labs_command)
     return parser
 
 
@@ -251,7 +306,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except (OpenAPIParseError, RequestBuildError, ScopeViolationError, ValidationError, ValueError) as exc:
+    except (
+        AuthResolutionError,
+        OpenAPIParseError,
+        RequestBuildError,
+        ScopeViolationError,
+        ValidationError,
+        ValueError,
+    ) as exc:
         parser.exit(1, f"yslfuzz: error: {exc}\n")
     except OSError as exc:
         parser.exit(1, f"yslfuzz: error: {exc}\n")
@@ -281,7 +343,10 @@ def run_scan_command(args: argparse.Namespace) -> int:
         )
 
     api_schema = OpenAPIParser().parse(openapi_path)
+    auth_profile = _auth_profile_from_args(args)
+    auth_material = AuthResolver().resolve(auth_profile) if auth_profile is not None else None
     target = _target_from_args(args.base_url, args.allow_destructive, args.max_requests)
+    target.auth_profile = auth_profile
     attack_categories = _attack_categories_from_args(args.attack_category)
     mutation_config = _mutation_config_from_args(args)
     analysis_config = _analysis_config_from_args(args)
@@ -298,6 +363,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
     execution_results: list[ExecutionResult] = []
     findings = []
     request_builder = RequestBuilder()
+    auth_injector = AuthInjector()
     scope_validator = ScopeValidator()
     executor = HttpExecutor()
     attack_executor = AttackExecutor(request_builder, scope_validator)
@@ -328,6 +394,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
             target=target,
             scan_run_id=scan.scan_run_id,
         )
+        request_record = auth_injector.apply(request_record, auth_material)
         try:
             scope_validator.validate(request_record, target.scope)
         except DestructiveMethodBlockedError:
@@ -343,10 +410,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 payloads.extend(_attack_payloads(endpoint, payload, attack_categories))
             continue
 
-        result = executor.execute(
+        result = _execute_request(
+            executor,
             request_record,
             scan_run_id=scan.scan_run_id,
             timeout_seconds=args.timeout,
+            auth_material=auth_material,
         )
         execution_results.append(result)
         if result.response_id is not None and result.response_id in executor.response_records:
@@ -368,14 +437,16 @@ def run_scan_command(args: argparse.Namespace) -> int:
                         dry_run=bool(args.dry_run),
                     )
                 ).plan(endpoint, [payload], generated_attacks)
-                attack_bundle = attack_executor.execute_plan(
-                    attack_plan,
-                    endpoint=endpoint,
-                    target=target,
-                    scan_run_id=scan.scan_run_id,
-                    timeout_seconds=args.timeout,
-                    dry_run=bool(args.dry_run),
-                )
+                attack_kwargs: dict[str, Any] = {
+                    "endpoint": endpoint,
+                    "target": target,
+                    "scan_run_id": scan.scan_run_id,
+                    "timeout_seconds": args.timeout,
+                    "dry_run": bool(args.dry_run),
+                }
+                if auth_material is not None:
+                    attack_kwargs["auth_material"] = auth_material
+                attack_bundle = attack_executor.execute_plan(attack_plan, **attack_kwargs)
                 requests.extend(attack_bundle.request_records)
                 responses.extend(attack_bundle.response_records)
                 execution_results.extend(attack_bundle.execution_results)
@@ -406,11 +477,13 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 target=target,
                 scan_run_id=scan.scan_run_id,
                 request_builder=request_builder,
+                auth_injector=auth_injector,
                 scope_validator=scope_validator,
                 executor=executor,
                 timeout_seconds=args.timeout,
                 max_requests=args.max_requests,
                 current_request_count=len(requests),
+                auth_material=auth_material,
             )
             requests.extend(mutation_bundle[0])
             responses.extend(mutation_bundle[1])
@@ -470,6 +543,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "random_seed": mutation_config.random_seed,
             "max_mutations_per_payload": mutation_config.max_mutations_per_payload,
             "max_mutations_per_field": mutation_config.max_mutations_per_field,
+            **_auth_report_metadata(auth_profile),
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
@@ -547,6 +621,25 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
         f"failed={failed_jobs}, status={result.status}, output_dir={args.output_dir}"
     )
     return 1 if result.status == "failed" else 0
+
+
+def run_labs_command(args: argparse.Namespace) -> int:
+    """Run the labs catalog command and return a process exit code."""
+    manifests = LabCatalog.discover(args.root)
+    if args.labs_command == "list":
+        for manifest in manifests:
+            print(
+                f"{manifest.lab_id}\t{manifest.lab_name}\t"
+                f"{manifest.lab_version}\t{manifest.api_style.value}"
+            )
+        return 0
+
+    lab_id = args.lab
+    for manifest in manifests:
+        if manifest.lab_id == lab_id:
+            print(json.dumps(manifest.catalog_summary(), indent=2, sort_keys=True))
+            return 0
+    raise ValueError(f"Unknown lab: {lab_id}")
 
 
 def _load_report_dict(path: Path) -> dict[str, object]:
@@ -670,6 +763,104 @@ def _analysis_config_from_args(args: argparse.Namespace) -> AnalysisConfig:
     )
 
 
+def _auth_profile_from_args(args: argparse.Namespace) -> AuthProfile | None:
+    bearer_env = getattr(args, "auth_bearer_env", None)
+    api_key_env = getattr(args, "auth_api_key_env", None)
+    api_key_header = getattr(args, "auth_api_key_header", "X-API-Key")
+    cookie_env = getattr(args, "auth_cookie_env", None)
+    cookie_name = getattr(args, "auth_cookie_name", "session")
+    custom_headers = list(getattr(args, "auth_header", []) or [])
+
+    configured_modes = sum(
+        bool(value)
+        for value in (
+            bearer_env,
+            api_key_env,
+            cookie_env,
+            custom_headers,
+        )
+    )
+    if configured_modes > 1:
+        raise ValueError("conflicting authentication flags: configure only one auth mode per scan")
+    if api_key_env is None and api_key_header != "X-API-Key":
+        raise ValueError("--auth-api-key-header requires --auth-api-key-env")
+    if cookie_env is None and cookie_name != "session":
+        raise ValueError("--auth-cookie-name requires --auth-cookie-env")
+    if configured_modes == 0:
+        return None
+
+    if bearer_env:
+        return AuthProfile(
+            name="cli-bearer",
+            auth_type=AuthType.BEARER,
+            credential_ref=AuthCredentialRef(env_var=bearer_env),
+        )
+    if api_key_env:
+        return AuthProfile(
+            name="cli-api-key-header",
+            auth_type=AuthType.API_KEY,
+            credential_ref=AuthCredentialRef(env_var=api_key_env),
+            header_name=api_key_header,
+        )
+    if cookie_env:
+        return AuthProfile(
+            name="cli-cookie",
+            auth_type=AuthType.COOKIE,
+            credential_ref=AuthCredentialRef(env_var=cookie_env),
+            cookie_name=cookie_name,
+        )
+
+    refs = [
+        AuthCredentialRef(env_var=env_var, header_name=header_name)
+        for header_name, env_var in (_parse_auth_header(value) for value in custom_headers)
+    ]
+    return AuthProfile(name="cli-custom-header", auth_type=AuthType.CUSTOM, credential_refs=refs)
+
+
+def _parse_auth_header(value: str) -> tuple[str, str]:
+    if ":" not in value:
+        raise ValueError("--auth-header must use HEADER_NAME:ENV_VAR")
+    header_name, env_var = value.split(":", 1)
+    header_name = header_name.strip()
+    env_var = env_var.strip()
+    if not header_name or not env_var:
+        raise ValueError("--auth-header must include both header name and environment variable name")
+    return header_name, env_var
+
+
+def _auth_report_metadata(profile: AuthProfile | None) -> dict[str, object]:
+    if profile is None:
+        return {
+            "authentication_enabled": False,
+            "authentication_types": [],
+            "auth_sources": [],
+            "auth_redaction_applied": True,
+        }
+    return profile.redacted_display()
+
+
+def _execute_request(
+    executor: HttpExecutor,
+    request_record: RequestRecord,
+    *,
+    scan_run_id: str,
+    timeout_seconds: float,
+    auth_material: ResolvedAuthMaterial | None = None,
+) -> ExecutionResult:
+    if auth_material is None:
+        return executor.execute(
+            request_record,
+            scan_run_id=scan_run_id,
+            timeout_seconds=timeout_seconds,
+        )
+    return executor.execute(
+        request_record,
+        scan_run_id=scan_run_id,
+        timeout_seconds=timeout_seconds,
+        auth_material=auth_material,
+    )
+
+
 def _mutation_payloads(
     endpoint: Endpoint,
     valid_payload: PayloadCandidate,
@@ -687,11 +878,13 @@ def _execute_payloads(
     target: Target,
     scan_run_id: str,
     request_builder: RequestBuilder,
+    auth_injector: AuthInjector,
     scope_validator: ScopeValidator,
     executor: HttpExecutor,
     timeout_seconds: float,
     max_requests: int | None,
     current_request_count: int,
+    auth_material: ResolvedAuthMaterial | None = None,
 ) -> tuple[list[RequestRecord], list[ResponseRecord], list[ExecutionResult]]:
     requests: list[RequestRecord] = []
     responses: list[ResponseRecord] = []
@@ -705,15 +898,18 @@ def _execute_payloads(
             target=target,
             scan_run_id=scan_run_id,
         )
+        request_record = auth_injector.apply(request_record, auth_material)
         try:
             scope_validator.validate(request_record, target.scope)
         except (DestructiveMethodBlockedError, ScopeViolationError):
             continue
         requests.append(request_record)
-        result = executor.execute(
+        result = _execute_request(
+            executor,
             request_record,
             scan_run_id=scan_run_id,
             timeout_seconds=timeout_seconds,
+            auth_material=auth_material,
         )
         execution_results.append(result)
         if result.response_id is not None and result.response_id in executor.response_records:

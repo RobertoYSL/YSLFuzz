@@ -1,11 +1,13 @@
 """Stateful workflow execution runtime."""
 
+from yslfuzz.auth.injector import AuthInjector
 from yslfuzz.execution.bindings import BindingResolutionError, BindingResolver
 from yslfuzz.execution.errors import ScopeViolationError
 from yslfuzz.execution.executor import HttpExecutor
 from yslfuzz.execution.request_builder import RequestBuilder
 from yslfuzz.execution.scope import ScopeValidator
 from yslfuzz.execution.value_extractor import ValueExtractionEngine, ValueExtractionError
+from yslfuzz.models.auth import ResolvedAuthMaterial
 from yslfuzz.models.dependency import Workflow, WorkflowStep
 from yslfuzz.models.enums import ExecutionStatus
 from yslfuzz.models.execution import (
@@ -32,6 +34,7 @@ class WorkflowExecutor:
         request_builder: RequestBuilder | None = None,
         scope_validator: ScopeValidator | None = None,
         http_executor: HttpExecutor | None = None,
+        auth_injector: AuthInjector | None = None,
     ) -> None:
         self._payload_generator = payload_generator or PayloadGenerator(seed=0)
         self._binding_resolver = binding_resolver or BindingResolver()
@@ -39,6 +42,7 @@ class WorkflowExecutor:
         self._request_builder = request_builder or RequestBuilder()
         self._scope_validator = scope_validator or ScopeValidator()
         self._http_executor = http_executor or HttpExecutor()
+        self._auth_injector = auth_injector or AuthInjector()
 
     def execute(
         self,
@@ -48,6 +52,7 @@ class WorkflowExecutor:
         scan_config: ScanConfiguration,
         session_state: SessionState | None = None,
         scan_run: ScanRun | None = None,
+        auth_material: ResolvedAuthMaterial | None = None,
     ) -> WorkflowExecutionResult:
         """Execute a workflow and return aggregated execution records."""
         endpoints_by_id = {endpoint.endpoint_id: endpoint for endpoint in api_schema.endpoints}
@@ -80,6 +85,7 @@ class WorkflowExecutor:
                     request_records,
                     response_records,
                     execution_results,
+                    auth_material,
                 )
             except (BindingResolutionError, ScopeViolationError, ValueExtractionError) as exc:
                 errors.append(str(exc))
@@ -115,6 +121,7 @@ class WorkflowExecutor:
         request_records: list[RequestRecord],
         response_records: list[ResponseRecord],
         execution_results: list[ExecutionResult],
+        auth_material: ResolvedAuthMaterial | None,
     ) -> RequestRecord | None:
         payload = self._payload_generator.generate_for_endpoint(endpoint)
         payload = self._binding_resolver.apply(
@@ -130,6 +137,7 @@ class WorkflowExecutor:
             session_state=session_state,
             scan_run_id=scan_run_id,
         )
+        request_record = self._auth_injector.apply(request_record, auth_material)
         request_record.workflow_step_id = step.workflow_step_id
         request_records.append(request_record)
         self._scope_validator.validate(request_record, target.scope)
@@ -138,6 +146,7 @@ class WorkflowExecutor:
             request_record,
             scan_run_id=scan_run_id,
             timeout_seconds=scan_config.request_timeout_seconds,
+            auth_material=auth_material,
         )
         execution_results.append(execution_result)
         if execution_result.status != ExecutionStatus.COMPLETED or execution_result.response_id is None:

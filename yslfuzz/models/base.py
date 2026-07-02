@@ -11,13 +11,38 @@ SENSITIVE_KEYWORDS = (
     "authorization",
     "api_key",
     "apikey",
+    "credential",
     "cookie",
     "jwt",
+    "passwd",
     "password",
     "secret",
     "set-cookie",
+    "set_cookie",
     "token",
 )
+SENSITIVE_EXACT_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "credentials",
+    "cookie",
+    "id_token",
+    "jwt",
+    "password",
+    "passwd",
+    "proxy_authorization",
+    "refresh_token",
+    "secret",
+    "session",
+    "set_cookie",
+    "token",
+    "x_api_key",
+    "x_auth_token",
+    "x_csrf_token",
+}
 
 
 def utc_now() -> datetime:
@@ -30,6 +55,8 @@ def prefixed_id(prefix: str) -> str:
 
 def is_sensitive_key(key: str) -> bool:
     normalized_key = key.lower().replace("-", "_")
+    if normalized_key in SENSITIVE_EXACT_KEYS:
+        return True
     return any(keyword in normalized_key for keyword in SENSITIVE_KEYWORDS)
 
 

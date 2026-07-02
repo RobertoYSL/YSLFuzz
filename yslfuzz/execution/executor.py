@@ -7,6 +7,7 @@ import httpx
 
 from yslfuzz.execution.errors import ExecutionError
 from yslfuzz.execution.redaction import redact_mapping_values
+from yslfuzz.models.auth import ResolvedAuthMaterial
 from yslfuzz.models.base import REDACTED_VALUE
 from yslfuzz.models.enums import ExecutionStatus
 from yslfuzz.models.execution import ExecutionResult, RequestRecord, ResponseRecord
@@ -24,11 +25,12 @@ class HttpExecutor:
         request_record: RequestRecord,
         scan_run_id: str,
         timeout_seconds: float = 10.0,
+        auth_material: ResolvedAuthMaterial | None = None,
     ) -> ExecutionResult:
         """Execute a request record and return the execution result."""
         started = perf_counter()
         try:
-            response = self._send(request_record, timeout_seconds)
+            response = self._send(request_record, timeout_seconds, auth_material)
         except httpx.TimeoutException as exc:
             return self._failed_result(request_record, "timeout", str(exc))
         except httpx.ConnectError as exc:
@@ -49,9 +51,14 @@ class HttpExecutor:
             metadata={"scan_run_id": scan_run_id},
         )
 
-    def _send(self, request_record: RequestRecord, timeout_seconds: float) -> httpx.Response:
+    def _send(
+        self,
+        request_record: RequestRecord,
+        timeout_seconds: float,
+        auth_material: ResolvedAuthMaterial | None = None,
+    ) -> httpx.Response:
         client = self._client
-        headers = self._headers_for_send(request_record)
+        headers = self._headers_for_send(request_record, auth_material)
         if client is not None:
             return client.request(
                 request_record.method.value,
@@ -74,12 +81,18 @@ class HttpExecutor:
                 timeout=timeout_seconds,
             )
 
-    def _headers_for_send(self, request_record: RequestRecord) -> dict[str, str]:
+    def _headers_for_send(
+        self,
+        request_record: RequestRecord,
+        auth_material: ResolvedAuthMaterial | None = None,
+    ) -> dict[str, str]:
         headers = {str(key): str(value) for key, value in request_record.headers.items()}
         if request_record.cookies and "Cookie" not in headers:
             headers["Cookie"] = "; ".join(
                 f"{name}={REDACTED_VALUE}" for name in request_record.cookies
             )
+        if auth_material is not None:
+            headers.update(auth_material.headers_for_send())
         return headers
 
     def _response_record(

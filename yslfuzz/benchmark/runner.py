@@ -166,6 +166,12 @@ class BenchmarkRunner:
             i_understand_mutation_execution_is_authorized=(
                 job.i_understand_mutation_execution_is_authorized
             ),
+            auth_bearer_env=job.auth_bearer_env,
+            auth_api_key_env=job.auth_api_key_env,
+            auth_api_key_header=job.auth_api_key_header,
+            auth_cookie_env=job.auth_cookie_env,
+            auth_cookie_name=job.auth_cookie_name,
+            auth_header=list(job.auth_headers),
         )
         run_scan_command(args)
 

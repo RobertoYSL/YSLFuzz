@@ -1,0 +1,33 @@
+{
+  "lab_id": "simple-users",
+  "lab_name": "Simple Users Mock Lab",
+  "lab_version": "0.1.0",
+  "description": "Safe local metadata pack for deterministic REST/OpenAPI evaluation and benchmark smoke tests.",
+  "target_name": "simple-users-api",
+  "target_type": "MOCK",
+  "api_style": "REST",
+  "openapi_path": "openapi.yaml",
+  "ground_truth_path": "ground_truth.json",
+  "benchmark_config_path": "benchmark.json",
+  "recommended_base_url": "http://localhost:8000",
+  "setup_type": "MANUAL",
+  "requires_authentication": false,
+  "supported_payload_modes": ["VALID", "BOUNDARY", "INVALID", "MUTATED", "ATTACK"],
+  "expected_vulnerability_count": 1,
+  "expected_endpoint_count": 3,
+  "safety_notes": [
+    "The benchmark config defaults to dry_run true.",
+    "Attack and mutation execution are disabled by default.",
+    "The recommended base URL is a local placeholder, not an external target."
+  ],
+  "limitations": [
+    "This pack does not include a runnable vulnerable application.",
+    "Ground truth describes mock behavior used by deterministic tests and thesis export examples.",
+    "Manual review is still required before using results as thesis evidence."
+  ],
+  "tags": ["rest", "openapi", "mock", "dry-run", "evaluation"],
+  "metadata": {
+    "owner": "yslfuzz",
+    "safe_for_local_tests": true
+  }
+}

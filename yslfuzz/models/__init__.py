@@ -7,7 +7,14 @@ from yslfuzz.models.analysis import (
     FindingFingerprint,
     SecurityFinding,
 )
-from yslfuzz.models.auth import AuthProfile, AuthScheme, SecretReference
+from yslfuzz.models.auth import (
+    AuthCredentialRef,
+    AuthLocation,
+    AuthProfile,
+    AuthScheme,
+    ResolvedAuthMaterial,
+    SecretReference,
+)
 from yslfuzz.models.base import REDACTED_VALUE, YSLFuzzModel
 from yslfuzz.models.benchmark import (
     BenchmarkArtifact,
@@ -47,6 +54,7 @@ from yslfuzz.models.evaluation import (
     FindingMatch,
     GroundTruthLab,
 )
+from yslfuzz.models.lab import LabManifest, LabSetupType, LabTargetType
 from yslfuzz.models.execution import (
     ExecutionPlan,
     ExecutionResult,
@@ -78,6 +86,8 @@ __all__ = [
     "ApiSchema",
     "ApiStyle",
     "AttackCategory",
+    "AuthCredentialRef",
+    "AuthLocation",
     "AuthProfile",
     "AuthScheme",
     "AuthType",
@@ -112,6 +122,9 @@ __all__ = [
     "GeneratedParameter",
     "GroundTruthLab",
     "HttpMethod",
+    "LabManifest",
+    "LabSetupType",
+    "LabTargetType",
     "Mutation",
     "Parameter",
     "ParameterLocation",
@@ -123,6 +136,7 @@ __all__ = [
     "ReportSummary",
     "RequestBodyDefinition",
     "RequestRecord",
+    "ResolvedAuthMaterial",
     "ResponseDefinition",
     "ResponseRecord",
     "ScanConfiguration",

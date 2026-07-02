@@ -83,7 +83,7 @@ def test_session_state_redacts_auth_material() -> None:
     serialized = session.model_dump(mode="json")
 
     assert serialized["headers"]["Authorization"] == REDACTED_VALUE
-    assert serialized["cookies"]["session"] == "cookie-value"
+    assert serialized["cookies"]["session"] == REDACTED_VALUE
     assert serialized["auth_tokens"]["access_token"] == REDACTED_VALUE
 
 

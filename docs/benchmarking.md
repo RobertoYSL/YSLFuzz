@@ -66,6 +66,12 @@ Each job supports:
 - `max_mutations_per_payload`
 - `max_mutations_per_field`
 - `max_attack_requests_per_endpoint`
+- `auth_bearer_env`
+- `auth_api_key_env`
+- `auth_api_key_header`
+- `auth_cookie_env`
+- `auth_cookie_name`
+- `auth_headers`
 - `notes`
 - `metadata`
 
@@ -107,6 +113,8 @@ If a job has no `ground_truth_path`, the `evaluation/` directory is omitted and 
 - environment summary containing Python version, platform, and YSLFuzz version.
 
 No environment variables or secrets are included.
+
+Authentication benchmark fields store environment variable names only. Raw credential values must never be placed in benchmark configs or artifacts.
 
 ## Thesis Evaluation
 

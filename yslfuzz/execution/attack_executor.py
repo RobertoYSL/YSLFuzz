@@ -2,10 +2,12 @@
 
 from collections.abc import Sequence
 
+from yslfuzz.auth.injector import AuthInjector
 from yslfuzz.execution.attack_plan import AttackExecutionPlan
 from yslfuzz.execution.executor import HttpExecutor
 from yslfuzz.execution.request_builder import RequestBuilder
 from yslfuzz.execution.scope import ScopeValidator
+from yslfuzz.models.auth import ResolvedAuthMaterial
 from yslfuzz.models.enums import ExecutionStatus
 from yslfuzz.models.execution import ExecutionResult, RequestRecord, ResponseRecord, SessionState
 from yslfuzz.models.project import Target
@@ -34,10 +36,12 @@ class AttackExecutor:
         request_builder: RequestBuilder | None = None,
         scope_validator: ScopeValidator | None = None,
         http_executor: HttpExecutor | None = None,
+        auth_injector: AuthInjector | None = None,
     ) -> None:
         self._request_builder = request_builder or RequestBuilder()
         self._scope_validator = scope_validator or ScopeValidator()
         self._http_executor = http_executor or HttpExecutor()
+        self._auth_injector = auth_injector or AuthInjector()
 
     def execute_plan(
         self,
@@ -48,6 +52,7 @@ class AttackExecutor:
         session_state: SessionState | None = None,
         timeout_seconds: float = 10.0,
         dry_run: bool = False,
+        auth_material: ResolvedAuthMaterial | None = None,
     ) -> AttackExecutionBundle:
         """Build, validate, and execute approved attack requests."""
         requests: list[RequestRecord] = []
@@ -65,6 +70,7 @@ class AttackExecutor:
                 session_state=session_state,
                 scan_run_id=scan_run_id,
             )
+            request = self._auth_injector.apply(request, auth_material)
             requests.append(request)
             try:
                 self._scope_validator.validate(request, target.scope)
@@ -83,6 +89,7 @@ class AttackExecutor:
                 request,
                 scan_run_id=scan_run_id,
                 timeout_seconds=timeout_seconds,
+                auth_material=auth_material,
             )
             results.append(result)
             if result.response_id is not None and result.response_id in self._http_executor.response_records:
