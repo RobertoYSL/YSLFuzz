@@ -26,6 +26,13 @@ from yslfuzz.config import (
     ScanConfigLoader,
 )
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
+from yslfuzz.discovery.graphql import (
+    GraphQLIntrospectionParseError,
+    GraphQLSDLParseError,
+    GraphQLSchemaLoadError,
+    GraphQLSchemaLoader,
+    GraphQLToApiSchemaMapper,
+)
 from yslfuzz.evaluation import (
     EvaluationExporter,
     EvaluationMetricsCalculator,
@@ -94,7 +101,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the REST/OpenAPI MVP scan pipeline",
     )
     scan_parser.add_argument("--config", default=None, help="JSON/YAML scan configuration file")
-    scan_parser.add_argument("--openapi", default=None, help="Local OpenAPI YAML/JSON file")
+    schema_group = scan_parser.add_mutually_exclusive_group()
+    schema_group.add_argument("--openapi", default=None, help="Local OpenAPI YAML/JSON file")
+    schema_group.add_argument(
+        "--graphql-schema",
+        default=None,
+        help="Local GraphQL SDL (.graphql/.gql) or introspection JSON file",
+    )
     scan_parser.add_argument("--base-url", default=None, help="Target base URL")
     scan_parser.add_argument("--output", default=None, help="JSON report output path")
     scan_parser.add_argument("--max-requests", type=int, default=None, help="Maximum requests to build")
@@ -318,14 +331,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(raw_argv)
     args._provided_options = _provided_options(raw_argv)
     if args.command == "scan" and args.config is None:
+        schema_supplied = args.openapi is not None or args.graphql_schema is not None
         missing = [
             option
             for option, value in (
-                ("--openapi", args.openapi),
+                ("--openapi or --graphql-schema", schema_supplied),
                 ("--base-url", args.base_url),
                 ("--output", args.output),
             )
-            if value is None
+            if not value
         ]
         if missing:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
@@ -335,6 +349,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         AuthResolutionError,
         ConfigLoadError,
         ConfigValidationError,
+        GraphQLIntrospectionParseError,
+        GraphQLSDLParseError,
+        GraphQLSchemaLoadError,
         OpenAPIParseError,
         RequestBuildError,
         ScopeViolationError,
@@ -350,7 +367,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 def run_scan_command(args: argparse.Namespace) -> int:
     """Run the scan command and return a process exit code."""
     args = _effective_scan_args(args)
-    openapi_path = Path(args.openapi)
+    openapi_arg = getattr(args, "openapi", None)
+    graphql_schema_arg = getattr(args, "graphql_schema", None)
+    if bool(openapi_arg) == bool(graphql_schema_arg):
+        raise ValueError("configure exactly one of --openapi or --graphql-schema")
+    if graphql_schema_arg is not None:
+        return _run_graphql_discovery_command(args)
+    if not isinstance(openapi_arg, str):
+        raise ValueError("--openapi must be a local file path")
+    openapi_path = Path(openapi_arg)
     if not openapi_path.is_file():
         raise FileNotFoundError(f"OpenAPI file does not exist: {openapi_path}")
     if args.max_requests is not None and args.max_requests < 0:
@@ -597,6 +622,106 @@ def run_scan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
+    graphql_schema_path = Path(args.graphql_schema)
+    if not graphql_schema_path.is_file():
+        raise FileNotFoundError(f"GraphQL schema file does not exist: {graphql_schema_path}")
+    if args.max_requests is not None and args.max_requests < 0:
+        raise ValueError("--max-requests must be greater than or equal to 0")
+    if args.timeout <= 0:
+        raise ValueError("--timeout must be greater than 0")
+
+    loader = GraphQLSchemaLoader()
+    graphql_schema = loader.load(graphql_schema_path)
+    api_schema = GraphQLToApiSchemaMapper().map(graphql_schema, base_url=args.base_url)
+    target = _target_from_args(
+        args.base_url,
+        args.allow_destructive,
+        args.max_requests,
+        api_style=ApiStyle.GRAPHQL,
+    )
+    if getattr(args, "target_name", None):
+        target.name = args.target_name
+    auth_profile = _auth_profile_from_args(args)
+    target.auth_profile = auth_profile
+    scan = ScanRun(
+        project_id="project_cli",
+        target_id=target.target_id,
+        scan_config_id="scan_config_cli",
+        api_schema_id=api_schema.api_schema_id,
+    )
+    metrics = MetricsCalculator().calculate(
+        scan_run_id=scan.scan_run_id,
+        endpoints=api_schema.endpoints,
+        payloads=[],
+        requests=[],
+        responses=[],
+        execution_results=[],
+        findings=[],
+    )
+    report = JsonReporter().build_report(
+        scan,
+        api_schema=api_schema,
+        payloads=[],
+        requests=[],
+        responses=[],
+        execution_results=[],
+        findings=[],
+        target=target,
+        metrics=metrics,
+        metadata={
+            "dry_run": True,
+            "api_style": "graphql",
+            "graphql_discovery_only": True,
+            "graphql_discovery_summary": graphql_schema.discovery_summary(),
+            "graphql_payload_generation_implemented": False,
+            "scan_status_message": (
+                "GraphQL payload generation is not implemented yet. "
+                "GraphQL discovery succeeded, but scanning GraphQL operations requires Milestone 20."
+            ),
+            "include_attack_payloads": False,
+            "execute_attacks": False,
+            "attack_execution_enabled": False,
+            "enabled_attack_categories": [],
+            "total_detector_results": 0,
+            "total_raw_findings": 0,
+            "total_deduplicated_findings": 0,
+            "deduplicate_findings": not bool(args.no_deduplicate_findings),
+            "analysis_config": _analysis_config_from_args(args).summary(),
+            "analysis_detectors": [],
+            "mutation_execution_enabled": False,
+            "mutation_config": _mutation_config_from_args(args).model_dump(mode="json"),
+            "random_seed": 0,
+            "max_mutations_per_payload": args.max_mutations_per_payload,
+            "max_mutations_per_field": args.max_mutations_per_field,
+            **_auth_report_metadata(auth_profile),
+            **_config_report_metadata(args),
+        },
+    )
+    output_path = JsonReporter().write_json(report, args.output)
+
+    _print_summary(
+        output_path=output_path,
+        total_endpoints=metrics.total_endpoints,
+        payloads_generated=metrics.payloads_generated,
+        valid_payloads_generated=metrics.valid_payloads_generated,
+        boundary_payloads_generated=metrics.boundary_payloads_generated,
+        invalid_payloads_generated=metrics.invalid_payloads_generated,
+        mutated_payloads_generated=metrics.mutated_payloads_generated,
+        attack_payloads_generated=metrics.attack_payloads_generated,
+        total_requests=metrics.total_requests,
+        successful_requests=metrics.successful_requests,
+        failed_requests=metrics.failed_requests,
+        findings_total=metrics.findings_total,
+        dry_run=True,
+    )
+    print(
+        "GraphQL discovery succeeded. GraphQL payload generation is not implemented yet; "
+        "scanning GraphQL operations requires Milestone 20."
+    )
+    return 0
+
+
 def run_evaluate_command(args: argparse.Namespace) -> int:
     """Run the evaluation command and return a process exit code."""
     report_path = Path(args.report)
@@ -703,6 +828,20 @@ def _config_overrides_from_args(
 ) -> dict[str, Any]:
     overrides: dict[str, Any] = {}
     _set_override(overrides, "target", "openapi_path", "--openapi", args.openapi, provided_options)
+    _set_override(
+        overrides,
+        "target",
+        "graphql_schema_path",
+        "--graphql-schema",
+        args.graphql_schema,
+        provided_options,
+    )
+    if "--graphql-schema" in provided_options:
+        overrides.setdefault("target", {})["api_style"] = ApiStyle.GRAPHQL.value
+        overrides.setdefault("target", {})["openapi_path"] = None
+    if "--openapi" in provided_options:
+        overrides.setdefault("target", {})["api_style"] = ApiStyle.REST.value
+        overrides.setdefault("target", {})["graphql_schema_path"] = None
     _set_override(overrides, "target", "base_url", "--base-url", args.base_url, provided_options)
     _set_override(
         overrides,
@@ -868,6 +1007,7 @@ def _args_from_scan_config(
 ) -> argparse.Namespace:
     effective = argparse.Namespace(**vars(args))
     effective.openapi = config.target.openapi_path
+    effective.graphql_schema = config.target.graphql_schema_path
     effective.base_url = config.target.base_url
     effective.target_name = config.target.target_name
     effective.output = config.reporting.output
@@ -971,7 +1111,13 @@ def _evaluation_reproducibility(
     }
 
 
-def _target_from_args(base_url: str, allow_destructive: bool, max_requests: int | None) -> Target:
+def _target_from_args(
+    base_url: str,
+    allow_destructive: bool,
+    max_requests: int | None,
+    *,
+    api_style: ApiStyle = ApiStyle.REST,
+) -> Target:
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("--base-url must be a valid HTTP or HTTPS URL")
@@ -984,7 +1130,7 @@ def _target_from_args(base_url: str, allow_destructive: bool, max_requests: int 
     return Target(
         name=parsed.hostname,
         base_url=base_url,
-        api_style=ApiStyle.REST,
+        api_style=api_style,
         protocol=protocol,
         scope=ScopeDefinition(
             allowed_hosts=[parsed.hostname],

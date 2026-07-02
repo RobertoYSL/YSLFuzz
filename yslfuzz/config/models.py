@@ -24,7 +24,8 @@ class ConfigModel(BaseModel):
 class TargetConfigSection(ConfigModel):
     """Target and schema input configuration."""
 
-    openapi_path: str
+    openapi_path: str | None = None
+    graphql_schema_path: str | None = None
     base_url: str
     api_style: ApiStyle = ApiStyle.REST
     target_id: str | None = None
@@ -32,10 +33,20 @@ class TargetConfigSection(ConfigModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> "TargetConfigSection":
-        """Keep the configuration MVP focused on REST/OpenAPI."""
-        if self.api_style != ApiStyle.REST:
-            raise ValueError("configuration profiles MVP supports REST/OpenAPI targets only")
-        return self
+        """Validate the configured local schema source for the selected API style."""
+        if self.api_style == ApiStyle.REST:
+            if self.openapi_path is None:
+                raise ValueError("REST configuration requires openapi_path")
+            if self.graphql_schema_path is not None:
+                raise ValueError("REST configuration must not set graphql_schema_path")
+            return self
+        if self.api_style == ApiStyle.GRAPHQL:
+            if self.graphql_schema_path is None:
+                raise ValueError("GraphQL configuration requires graphql_schema_path")
+            if self.openapi_path is not None:
+                raise ValueError("GraphQL configuration must not set openapi_path")
+            return self
+        raise ValueError("configuration profiles support REST or GraphQL targets")
 
 
 class AuthConfigSection(ConfigModel):

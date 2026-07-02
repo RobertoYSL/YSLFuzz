@@ -42,12 +42,20 @@ class ScanConfigLoader:
 
     def _resolve_paths(self, config: ScanConfig, source: Path) -> ScanConfig:
         base_dir = source.resolve().parent
-        openapi_path = self._resolve_path(config.target.openapi_path, base_dir)
-        if not openapi_path.is_file():
-            raise ConfigLoadError(f"Configured OpenAPI file does not exist: {openapi_path}")
+        if config.target.openapi_path is not None:
+            openapi_path = self._resolve_path(config.target.openapi_path, base_dir)
+            if not openapi_path.is_file():
+                raise ConfigLoadError(f"Configured OpenAPI file does not exist: {openapi_path}")
+            config.target.openapi_path = str(openapi_path)
+        if config.target.graphql_schema_path is not None:
+            graphql_schema_path = self._resolve_path(config.target.graphql_schema_path, base_dir)
+            if not graphql_schema_path.is_file():
+                raise ConfigLoadError(
+                    f"Configured GraphQL schema file does not exist: {graphql_schema_path}"
+                )
+            config.target.graphql_schema_path = str(graphql_schema_path)
         output_path = self._resolve_path(config.reporting.output, base_dir)
 
-        config.target.openapi_path = str(openapi_path)
         config.reporting.output = str(output_path)
         config.config_file_path = str(source.resolve())
         config.config_loaded_at = utc_now().isoformat()
