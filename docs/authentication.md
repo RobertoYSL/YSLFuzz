@@ -9,7 +9,7 @@ YSLFuzz supports safe runtime authentication for REST/OpenAPI scans. Authenticat
 - Cookie header: default cookie name `session`, or a user-provided cookie name
 - Custom header: one or more `HEADER_NAME:ENV_VAR` mappings
 
-Query-string credentials, OAuth login flows, browser login, token refresh, secret managers, and config-file auth profiles are not part of this MVP.
+Query-string credentials, OAuth login flows, browser login, token refresh, and secret managers are not part of this MVP. Configuration profiles may reference authentication environment variable names, but never raw credential values.
 
 ## CLI Usage
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,15 @@ from yslfuzz import __version__
 from yslfuzz.analysis import AnalysisConfig, AnalysisEngine, FindingBuilder
 from yslfuzz.auth import AuthInjector, AuthResolutionError, AuthResolver
 from yslfuzz.benchmark import BenchmarkConfigLoader, BenchmarkRunner
+from yslfuzz.config import (
+    ConfigHasher,
+    ConfigLoadError,
+    ConfigMerger,
+    ConfigValidationError,
+    ConfigValidator,
+    ScanConfig,
+    ScanConfigLoader,
+)
 from yslfuzz.discovery import OpenAPIParseError, OpenAPIParser
 from yslfuzz.evaluation import (
     EvaluationExporter,
@@ -83,9 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the REST/OpenAPI MVP scan pipeline",
         description="Run the REST/OpenAPI MVP scan pipeline",
     )
-    scan_parser.add_argument("--openapi", required=True, help="Local OpenAPI YAML/JSON file")
-    scan_parser.add_argument("--base-url", required=True, help="Target base URL")
-    scan_parser.add_argument("--output", required=True, help="JSON report output path")
+    scan_parser.add_argument("--config", default=None, help="JSON/YAML scan configuration file")
+    scan_parser.add_argument("--openapi", default=None, help="Local OpenAPI YAML/JSON file")
+    scan_parser.add_argument("--base-url", default=None, help="Target base URL")
+    scan_parser.add_argument("--output", default=None, help="JSON report output path")
     scan_parser.add_argument("--max-requests", type=int, default=None, help="Maximum requests to build")
     scan_parser.add_argument(
         "--timeout",
@@ -303,11 +314,27 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the YSLFuzz CLI."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(raw_argv)
+    args._provided_options = _provided_options(raw_argv)
+    if args.command == "scan" and args.config is None:
+        missing = [
+            option
+            for option, value in (
+                ("--openapi", args.openapi),
+                ("--base-url", args.base_url),
+                ("--output", args.output),
+            )
+            if value is None
+        ]
+        if missing:
+            parser.error(f"the following arguments are required: {', '.join(missing)}")
     try:
         return int(args.func(args))
     except (
         AuthResolutionError,
+        ConfigLoadError,
+        ConfigValidationError,
         OpenAPIParseError,
         RequestBuildError,
         ScopeViolationError,
@@ -322,6 +349,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def run_scan_command(args: argparse.Namespace) -> int:
     """Run the scan command and return a process exit code."""
+    args = _effective_scan_args(args)
     openapi_path = Path(args.openapi)
     if not openapi_path.is_file():
         raise FileNotFoundError(f"OpenAPI file does not exist: {openapi_path}")
@@ -346,6 +374,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
     auth_profile = _auth_profile_from_args(args)
     auth_material = AuthResolver().resolve(auth_profile) if auth_profile is not None else None
     target = _target_from_args(args.base_url, args.allow_destructive, args.max_requests)
+    if getattr(args, "target_name", None):
+        target.name = args.target_name
     target.auth_profile = auth_profile
     attack_categories = _attack_categories_from_args(args.attack_category)
     mutation_config = _mutation_config_from_args(args)
@@ -544,6 +574,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "max_mutations_per_payload": mutation_config.max_mutations_per_payload,
             "max_mutations_per_field": mutation_config.max_mutations_per_field,
             **_auth_report_metadata(auth_profile),
+            **_config_report_metadata(args),
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
@@ -640,6 +671,268 @@ def run_labs_command(args: argparse.Namespace) -> int:
             print(json.dumps(manifest.catalog_summary(), indent=2, sort_keys=True))
             return 0
     raise ValueError(f"Unknown lab: {lab_id}")
+
+
+def _provided_options(argv: Sequence[str]) -> set[str]:
+    options: set[str] = set()
+    for item in argv:
+        if item.startswith("--"):
+            options.add(item.split("=", 1)[0])
+    return options
+
+
+def _effective_scan_args(args: argparse.Namespace) -> argparse.Namespace:
+    config_path = getattr(args, "config", None)
+    if config_path is None:
+        args._config_file_used = False
+        args._config_hash = None
+        args._scan_config = None
+        return args
+
+    config = ScanConfigLoader().load(config_path)
+    overrides = _config_overrides_from_args(args, getattr(args, "_provided_options", set()))
+    merged_config = ConfigMerger().merge(config, overrides)
+    ConfigValidator().validate(merged_config)
+    config_hash = ConfigHasher().hash(merged_config)
+    return _args_from_scan_config(args, merged_config, config_hash)
+
+
+def _config_overrides_from_args(
+    args: argparse.Namespace,
+    provided_options: set[str],
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    _set_override(overrides, "target", "openapi_path", "--openapi", args.openapi, provided_options)
+    _set_override(overrides, "target", "base_url", "--base-url", args.base_url, provided_options)
+    _set_override(
+        overrides,
+        "reporting",
+        "output",
+        "--output",
+        args.output,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "execution",
+        "max_requests",
+        "--max-requests",
+        args.max_requests,
+        provided_options,
+    )
+    _set_override(overrides, "execution", "timeout", "--timeout", args.timeout, provided_options)
+
+    for option, key in (
+        ("--allow-destructive", "allow_destructive"),
+        ("--dry-run", "dry_run"),
+        ("--execute-mutations", "execute_mutations"),
+        ("--execute-attacks", "execute_attacks"),
+        ("--i-understand-this-is-authorized", "i_understand_attack_execution_is_authorized"),
+        (
+            "--i-understand-mutation-execution-is-authorized",
+            "i_understand_mutation_execution_is_authorized",
+        ),
+    ):
+        if option in provided_options:
+            overrides.setdefault("execution", {})[key] = True
+
+    for option, key in (
+        ("--include-boundary-payloads", "include_boundary_payloads"),
+        ("--include-invalid-payloads", "include_invalid_payloads"),
+        ("--include-mutated-payloads", "include_mutated_payloads"),
+        ("--include-attack-payloads", "include_attack_payloads"),
+        ("--mutate-sensitive-fields", "mutate_sensitive_fields"),
+        ("--allow-invalid-enum-values", "allow_invalid_enum_values"),
+        ("--disable-type-confusion", "disable_type_confusion"),
+        ("--disable-boundary-values", "disable_boundary_values"),
+        ("--disable-null-mutations", "disable_null_mutations"),
+    ):
+        if option in provided_options:
+            overrides.setdefault("payloads", {})[key] = True
+
+    _set_override(
+        overrides,
+        "payloads",
+        "max_mutations_per_payload",
+        "--max-mutations-per-payload",
+        args.max_mutations_per_payload,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "payloads",
+        "max_mutations_per_field",
+        "--max-mutations-per-field",
+        args.max_mutations_per_field,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "payloads",
+        "max_attack_requests_per_endpoint",
+        "--max-attack-requests-per-endpoint",
+        args.max_attack_requests_per_endpoint,
+        provided_options,
+    )
+    if "--attack-category" in provided_options:
+        overrides.setdefault("payloads", {})["enabled_attack_categories"] = [
+            str(category).upper() for category in args.attack_category
+        ]
+
+    if "--disable-detector" in provided_options:
+        overrides.setdefault("analysis", {})["disabled_detectors"] = list(args.disable_detector)
+    if "--analysis-min-confidence" in provided_options:
+        overrides.setdefault("analysis", {})["analysis_min_confidence"] = str(
+            args.analysis_min_confidence
+        ).upper()
+
+    auth_overrides = _auth_overrides_from_args(args, provided_options)
+    if auth_overrides:
+        overrides["auth"] = auth_overrides
+
+    return overrides
+
+
+def _set_override(
+    overrides: dict[str, Any],
+    section: str,
+    key: str,
+    option: str,
+    value: Any,
+    provided_options: set[str],
+) -> None:
+    if option in provided_options:
+        overrides.setdefault(section, {})[key] = value
+
+
+def _auth_overrides_from_args(
+    args: argparse.Namespace,
+    provided_options: set[str],
+) -> dict[str, Any]:
+    mode_options = {
+        "--auth-bearer-env",
+        "--auth-api-key-env",
+        "--auth-cookie-env",
+        "--auth-header",
+    }
+    name_only_options = {"--auth-api-key-header", "--auth-cookie-name"}
+    if not (provided_options & (mode_options | name_only_options)):
+        return {}
+
+    if "--auth-bearer-env" in provided_options:
+        return _auth_override_base(bearer_env=args.auth_bearer_env)
+    if "--auth-api-key-env" in provided_options:
+        return _auth_override_base(
+            api_key_env=args.auth_api_key_env,
+            api_key_header=args.auth_api_key_header,
+        )
+    if "--auth-cookie-env" in provided_options:
+        return _auth_override_base(
+            cookie_env=args.auth_cookie_env,
+            cookie_name=args.auth_cookie_name,
+        )
+    if "--auth-header" in provided_options:
+        return _auth_override_base(custom_headers=list(args.auth_header or []))
+
+    auth: dict[str, Any] = {}
+    if "--auth-api-key-header" in provided_options:
+        auth["api_key_header"] = args.auth_api_key_header
+    if "--auth-cookie-name" in provided_options:
+        auth["cookie_name"] = args.auth_cookie_name
+    return auth
+
+
+def _auth_override_base(
+    *,
+    bearer_env: str | None = None,
+    api_key_env: str | None = None,
+    api_key_header: str = "X-API-Key",
+    cookie_env: str | None = None,
+    cookie_name: str = "session",
+    custom_headers: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "bearer_env": bearer_env,
+        "api_key_env": api_key_env,
+        "api_key_header": api_key_header,
+        "cookie_env": cookie_env,
+        "cookie_name": cookie_name,
+        "custom_headers": custom_headers or [],
+    }
+
+
+def _args_from_scan_config(
+    args: argparse.Namespace,
+    config: ScanConfig,
+    config_hash: str,
+) -> argparse.Namespace:
+    effective = argparse.Namespace(**vars(args))
+    effective.openapi = config.target.openapi_path
+    effective.base_url = config.target.base_url
+    effective.target_name = config.target.target_name
+    effective.output = config.reporting.output
+    effective.max_requests = config.execution.max_requests
+    effective.timeout = config.execution.timeout
+    effective.allow_destructive = config.execution.allow_destructive
+    effective.dry_run = config.execution.dry_run
+    effective.include_boundary_payloads = config.payloads.include_boundary_payloads
+    effective.include_invalid_payloads = config.payloads.include_invalid_payloads
+    effective.include_mutated_payloads = config.payloads.include_mutated_payloads
+    effective.include_attack_payloads = config.payloads.include_attack_payloads
+    effective.execute_mutations = config.execution.execute_mutations
+    effective.execute_attacks = config.execution.execute_attacks
+    effective.attack_category = [
+        category.value for category in config.payloads.enabled_attack_categories
+    ]
+    effective.max_mutations_per_payload = config.payloads.max_mutations_per_payload
+    effective.max_mutations_per_field = config.payloads.max_mutations_per_field
+    effective.max_attack_requests_per_endpoint = config.payloads.max_attack_requests_per_endpoint
+    effective.mutate_sensitive_fields = config.payloads.mutate_sensitive_fields
+    effective.allow_invalid_enum_values = config.payloads.allow_invalid_enum_values
+    effective.disable_type_confusion = config.payloads.disable_type_confusion
+    effective.disable_boundary_values = config.payloads.disable_boundary_values
+    effective.disable_null_mutations = config.payloads.disable_null_mutations
+    effective.i_understand_this_is_authorized = (
+        config.execution.i_understand_attack_execution_is_authorized
+    )
+    effective.i_understand_mutation_execution_is_authorized = (
+        config.execution.i_understand_mutation_execution_is_authorized
+    )
+    effective.disable_detector = list(config.analysis.disabled_detectors)
+    effective.analysis_min_confidence = (
+        config.analysis.analysis_min_confidence.value
+        if config.analysis.analysis_min_confidence is not None
+        else None
+    )
+    effective.auth_bearer_env = config.auth.bearer_env
+    effective.auth_api_key_env = config.auth.api_key_env
+    effective.auth_api_key_header = config.auth.api_key_header
+    effective.auth_cookie_env = config.auth.cookie_env
+    effective.auth_cookie_name = config.auth.cookie_name
+    effective.auth_header = list(config.auth.custom_headers)
+    effective._config_file_used = True
+    effective._scan_config = config
+    effective._config_hash = config_hash
+    return effective
+
+
+def _config_report_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    config = getattr(args, "_scan_config", None)
+    if config is None:
+        return {
+            "config_file_used": False,
+            "config_profile_name": None,
+            "config_hash": None,
+            "config_loaded_at": None,
+            "config_enabled_modes": {},
+        }
+    return {
+        "config_file_used": True,
+        "config_profile_name": config.metadata.scan_name,
+        "config_hash": getattr(args, "_config_hash", None),
+        "config_loaded_at": config.config_loaded_at,
+        "config_enabled_modes": config.safe_enabled_modes_summary(),
+    }
 
 
 def _load_report_dict(path: Path) -> dict[str, object]:

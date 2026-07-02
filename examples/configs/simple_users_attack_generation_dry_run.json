@@ -1,0 +1,25 @@
+{
+  "target": {
+    "openapi_path": "../openapi/simple_users_api.yaml",
+    "base_url": "http://localhost:8000",
+    "api_style": "REST",
+    "target_name": "simple-users"
+  },
+  "payloads": {
+    "include_attack_payloads": true,
+    "enabled_attack_categories": ["INFORMATION_DISCLOSURE"],
+    "max_attack_requests_per_endpoint": 1
+  },
+  "execution": {
+    "dry_run": true,
+    "execute_attacks": false,
+    "max_requests": 1
+  },
+  "reporting": {
+    "output": "simple_users_attack_generation_dry_run_report.json"
+  },
+  "metadata": {
+    "scan_name": "simple-users-attack-generation-dry-run",
+    "tags": ["example", "attack-generation", "dry-run"]
+  }
+}

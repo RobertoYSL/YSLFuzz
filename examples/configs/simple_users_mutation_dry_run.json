@@ -1,0 +1,26 @@
+{
+  "target": {
+    "openapi_path": "../openapi/simple_users_api.yaml",
+    "base_url": "http://localhost:8000",
+    "api_style": "REST",
+    "target_name": "simple-users"
+  },
+  "payloads": {
+    "include_boundary_payloads": true,
+    "include_invalid_payloads": true,
+    "include_mutated_payloads": true,
+    "max_mutations_per_payload": 10,
+    "max_mutations_per_field": 2
+  },
+  "execution": {
+    "dry_run": true,
+    "max_requests": 1
+  },
+  "reporting": {
+    "output": "simple_users_mutation_dry_run_report.json"
+  },
+  "metadata": {
+    "scan_name": "simple-users-mutation-dry-run",
+    "tags": ["example", "mutation", "dry-run"]
+  }
+}

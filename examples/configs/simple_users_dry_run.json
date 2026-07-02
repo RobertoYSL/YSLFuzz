@@ -1,0 +1,19 @@
+{
+  "target": {
+    "openapi_path": "../openapi/simple_users_api.yaml",
+    "base_url": "http://localhost:8000",
+    "api_style": "REST",
+    "target_name": "simple-users"
+  },
+  "execution": {
+    "dry_run": true,
+    "max_requests": 1
+  },
+  "reporting": {
+    "output": "simple_users_dry_run_report.json"
+  },
+  "metadata": {
+    "scan_name": "simple-users-dry-run",
+    "tags": ["example", "dry-run"]
+  }
+}
