@@ -14,6 +14,16 @@ from yslfuzz.analysis.detectors import (
     StatusCodeAnomalyDetector,
     ValidationBypassDetector,
 )
+from yslfuzz.analysis.graphql.detectors import (
+    GraphQLAuthorizationConsistencyDetector,
+    GraphQLErrorDisclosureDetector,
+    GraphQLInjectionMarkerDetector,
+    GraphQLIntrospectionExposureDetector,
+    GraphQLMassAssignmentDetector,
+    GraphQLReflectionDetector,
+    GraphQLSSRFMarkerDetector,
+    GraphQLValidationBypassDetector,
+)
 
 
 DETECTOR_FLAGS: dict[str, str] = {
@@ -25,6 +35,14 @@ DETECTOR_FLAGS: dict[str, str] = {
     ValidationBypassDetector.name: "enable_validation_bypass_detection",
     MassAssignmentDetector.name: "enable_mass_assignment_detection",
     BasicAuthorizationBypassDetector.name: "enable_authz_bypass_detection",
+    GraphQLErrorDisclosureDetector.name: "enable_graphql_error_disclosure",
+    GraphQLValidationBypassDetector.name: "enable_graphql_validation_bypass",
+    GraphQLIntrospectionExposureDetector.name: "enable_graphql_introspection_exposure",
+    GraphQLReflectionDetector.name: "enable_graphql_reflection_detection",
+    GraphQLMassAssignmentDetector.name: "enable_graphql_mass_assignment_detection",
+    GraphQLAuthorizationConsistencyDetector.name: "enable_graphql_authorization_consistency",
+    GraphQLInjectionMarkerDetector.name: "enable_graphql_injection_marker_detection",
+    GraphQLSSRFMarkerDetector.name: "enable_graphql_ssrf_marker_detection",
 }
 
 
@@ -40,6 +58,14 @@ def default_detectors(config: AnalysisConfig | None = None) -> list[ResponseDete
         ValidationBypassDetector(analysis_config),
         MassAssignmentDetector(analysis_config),
         BasicAuthorizationBypassDetector(analysis_config),
+        GraphQLErrorDisclosureDetector(analysis_config),
+        GraphQLValidationBypassDetector(analysis_config),
+        GraphQLIntrospectionExposureDetector(analysis_config),
+        GraphQLReflectionDetector(analysis_config),
+        GraphQLMassAssignmentDetector(analysis_config),
+        GraphQLAuthorizationConsistencyDetector(analysis_config),
+        GraphQLInjectionMarkerDetector(analysis_config),
+        GraphQLSSRFMarkerDetector(analysis_config),
     ]
 
 

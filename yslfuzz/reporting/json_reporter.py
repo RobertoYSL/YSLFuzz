@@ -73,6 +73,7 @@ class JsonReporter:
             calculated_metrics,
             report_metadata,
         )
+        report_metadata["graphql_analysis_summary"] = self._graphql_analysis_summary(findings)
         detector_metadata = self._detector_metadata(report_metadata)
         enriched_findings = self._finding_enricher.enrich(
             findings,
@@ -145,6 +146,7 @@ class JsonReporter:
                 "graphql_mutation_attack_generation",
                 {},
             )
+            data["graphql_analysis_summary"] = metadata.get("graphql_analysis_summary", {})
             data["payload_summary"] = metadata.get("payload_summary", {})
             data["analysis_summary"] = metadata.get("analysis_summary", {})
             data["severity_summary"] = metadata.get("severity_summary", {})
@@ -325,6 +327,58 @@ class JsonReporter:
             "max_mutations_per_payload": metadata.get("max_mutations_per_payload"),
             "max_mutations_per_field": metadata.get("max_mutations_per_field"),
         }
+
+    def _graphql_analysis_summary(
+        self,
+        findings: Sequence[SecurityFinding],
+    ) -> dict[str, Any]:
+        graphql_findings = [
+            finding
+            for finding in findings
+            if str(finding.metadata.get("detector_id", "")).startswith("detector_graphql_")
+            or str(finding.metadata.get("api_style", "")).lower() == "graphql"
+        ]
+        by_detector: dict[str, int] = {}
+        by_category: dict[str, int] = {}
+        by_severity: dict[str, int] = {}
+        for finding in graphql_findings:
+            detector_id = self._optional_str(finding.metadata.get("detector_id")) or "unknown"
+            by_detector[detector_id] = by_detector.get(detector_id, 0) + 1
+            by_category[finding.attack_category.value] = (
+                by_category.get(finding.attack_category.value, 0) + 1
+            )
+            by_severity[finding.severity.value] = by_severity.get(finding.severity.value, 0) + 1
+
+        detector_key_map = {
+            "graphql_error_disclosure_findings": "detector_graphql_error_disclosure",
+            "graphql_validation_bypass_findings": "detector_graphql_validation_bypass",
+            "graphql_introspection_exposure_findings": (
+                "detector_graphql_introspection_exposure"
+            ),
+            "graphql_reflection_findings": "detector_graphql_reflection",
+            "graphql_mass_assignment_findings": "detector_graphql_mass_assignment",
+            "graphql_authz_consistency_findings": (
+                "detector_graphql_authorization_consistency"
+            ),
+            "graphql_injection_marker_findings": "detector_graphql_injection_marker",
+            "graphql_ssrf_marker_findings": "detector_graphql_ssrf_marker",
+        }
+        summary: dict[str, Any] = {
+            "graphql_detector_results": len(graphql_findings),
+            "graphql_findings_total": len(graphql_findings),
+            "graphql_findings_by_detector": {
+                key: by_detector[key] for key in sorted(by_detector)
+            },
+            "graphql_findings_by_category": {
+                key: by_category[key] for key in sorted(by_category)
+            },
+            "graphql_findings_by_severity": {
+                key: by_severity[key] for key in sorted(by_severity)
+            },
+        }
+        for output_key, detector_id in detector_key_map.items():
+            summary[output_key] = by_detector.get(detector_id, 0)
+        return summary
 
     def _detector_version(
         self,

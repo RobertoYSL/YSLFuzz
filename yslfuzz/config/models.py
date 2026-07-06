@@ -175,6 +175,8 @@ class GraphQLConfigSection(ConfigModel):
     max_operations: int | None = None
     max_requests: int | None = None
     execute_graphql: bool = True
+    enable_analysis: bool = True
+    include_introspection_probe: bool = False
 
     @model_validator(mode="after")
     def validate_graphql_settings(self) -> "GraphQLConfigSection":
@@ -221,6 +223,14 @@ class AnalysisConfigSection(ConfigModel):
 
     disabled_detectors: list[str] = Field(default_factory=list)
     analysis_min_confidence: FindingConfidence | None = None
+    enable_graphql_error_disclosure: bool = True
+    enable_graphql_validation_bypass: bool = True
+    enable_graphql_introspection_exposure: bool = True
+    enable_graphql_reflection_detection: bool = True
+    enable_graphql_mass_assignment_detection: bool = True
+    enable_graphql_authorization_consistency: bool = True
+    enable_graphql_injection_marker_detection: bool = True
+    enable_graphql_ssrf_marker_detection: bool = True
 
 
 class ReportingConfigSection(ConfigModel):
@@ -308,6 +318,8 @@ class ScanConfig(ConfigModel):
             "allow_extra_input_fields": self.payloads.allow_extra_input_fields,
             "allow_missing_required_fields": self.payloads.allow_missing_required_fields,
             "allow_introspection_probe": self.payloads.allow_introspection_probe,
+            "graphql_include_introspection_probe": self.graphql.include_introspection_probe,
+            "graphql_enable_analysis": self.graphql.enable_analysis,
             "graphql_include_queries": self.payloads.graphql_include_queries,
             "graphql_include_mutations": self.payloads.graphql_include_mutations,
             "graphql_include_subscriptions": self.payloads.graphql_include_subscriptions,

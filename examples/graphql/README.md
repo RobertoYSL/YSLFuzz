@@ -84,6 +84,38 @@ uv run yslfuzz scan \
   --output graphql_attack_generation_report.json
 ```
 
+Generate safe marker probes for selected categories in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --attack-category SQL_INJECTION \
+  --attack-category NOSQL_INJECTION \
+  --attack-category COMMAND_INJECTION \
+  --attack-category SSRF \
+  --dry-run \
+  --output graphql_safe_marker_report.json
+```
+
+The generated values are inert YSLFuzz markers. They do not contain SQL syntax, NoSQL operators,
+shell commands, localhost URLs, private IPs, link-local addresses, cloud metadata hosts, or callback
+domains.
+
+Generate the bounded introspection probe only when explicitly enabled:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --attack-category GRAPHQL_INTROSPECTION_ABUSE \
+  --graphql-include-introspection-probe \
+  --dry-run \
+  --output graphql_introspection_probe_report.json
+```
+
 Execute mutated GraphQL payloads only against an authorized local or mock endpoint:
 
 ```bash
@@ -99,6 +131,14 @@ uv run yslfuzz scan \
 Attack-classified GraphQL probes require `--execute-attacks` and
 `--i-understand-this-is-authorized`. They use inert markers only and should be used only against
 authorized local or mock endpoints.
+
+GraphQL analysis runs after executed GraphQL non-valid or attack payloads have responses. Dry-run
+reports include generated and planned probe summaries but no findings because no HTTP responses are
+received.
+
+Authorization consistency analysis is passive in these examples. It can analyze explicitly paired
+auth/no-auth or alternate-profile records, but this milestone does not add active credential
+mutation, brute force, or silent unauthenticated execution.
 
 Example generated payload body:
 

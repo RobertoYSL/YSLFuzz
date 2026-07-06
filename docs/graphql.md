@@ -106,9 +106,16 @@ Attack-classified payloads use inert markers only:
 - `INFORMATION_DISCLOSURE`: safe schema validation error probes.
 - `XSS`: inert reflection marker `yslfuzz_graphql_reflection_marker`; no executable JavaScript.
 - `MASS_ASSIGNMENT`: safe extra input field `yslfuzz_extra_field`.
+- `SQL_INJECTION`: inert marker `yslfuzz_graphql_sql_marker`; no SQL syntax.
+- `NOSQL_INJECTION`: inert marker `yslfuzz_graphql_nosql_marker`; no NoSQL operator objects.
+- `COMMAND_INJECTION`: inert marker `yslfuzz_graphql_command_marker`; no shell syntax or command names.
+- `SSRF`: inert marker `https://yslfuzz-ssrf-marker.invalid/resource`; no localhost, private IP,
+  link-local, cloud metadata, or callback targets.
 - `GRAPHQL_INTROSPECTION_ABUSE`: minimal `__schema` query only when introspection probe generation is explicitly enabled.
 
 No auth bypass payloads are generated in this milestone. No credentials are changed or removed.
+Broken access control is represented by metadata-compatible analysis support for explicitly paired
+records only.
 
 ## Execution
 
@@ -137,7 +144,30 @@ GraphQL HTTP 200 responses with an `errors` array are captured as response metad
 - `graphql_has_errors`
 - `graphql_error_count`
 
-These errors are not classified as vulnerabilities in this milestone.
+## GraphQL Analysis
+
+GraphQL-specific analysis runs on executed GraphQL response records through the shared analysis
+engine. It is conservative and produces LOW or MEDIUM severity findings only.
+
+Implemented GraphQL detectors:
+
+- `GraphQLErrorDisclosureDetector`: GraphQL `errors` arrays with stack-trace-like, framework,
+  resolver, database, or internal extension details.
+- `GraphQLValidationBypassDetector`: invalid or boundary GraphQL payloads that receive HTTP 2xx
+  responses with `data` and no GraphQL errors.
+- `GraphQLIntrospectionExposureDetector`: schema metadata only from already executed introspection
+  probes.
+- `GraphQLReflectionDetector`: exact reflection of YSLFuzz inert markers.
+- `GraphQLMassAssignmentDetector`: successful handling of the safe extra input field marker.
+- `GraphQLAuthorizationConsistencyDetector`: explicitly paired authenticated and unauthenticated
+  or alternate-profile records. It does not mutate credentials or remove auth silently.
+- `GraphQLInjectionMarkerDetector`: inert SQL, NoSQL, and command marker response signals without
+  real exploit strings.
+- `GraphQLSSRFMarkerDetector`: URL-handling signals for the safe `.invalid` SSRF marker without
+  network callbacks or internal targets.
+
+Findings are intentionally phrased as "Possible" signals. YSLFuzz does not confirm GraphQL
+vulnerabilities in this milestone.
 
 ## CLI Usage
 
@@ -172,6 +202,7 @@ Useful optional flags:
 --graphql-queries-only
 --graphql-mutations-only
 --graphql-max-operations 10
+--graphql-include-introspection-probe
 ```
 
 Generate boundary payloads in dry-run:
@@ -205,6 +236,31 @@ uv run yslfuzz scan \
   --include-attack-payloads \
   --dry-run \
   --output graphql_attack_generation_report.json
+```
+
+Generate safe SQL marker probes in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --attack-category SQL_INJECTION \
+  --dry-run \
+  --output graphql_sql_marker_report.json
+```
+
+Generate the bounded introspection probe only when explicitly enabled:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --attack-category GRAPHQL_INTROSPECTION_ABUSE \
+  --graphql-include-introspection-probe \
+  --dry-run \
+  --output graphql_introspection_probe_report.json
 ```
 
 Execute GraphQL mutated payloads only with explicit authorization:
@@ -250,7 +306,9 @@ Configuration profiles can select GraphQL discovery, payload generation, and exe
     "max_fields_per_selection": 5,
     "include_queries": true,
     "include_mutations": true,
-    "max_requests": 20
+    "max_requests": 20,
+    "enable_analysis": true,
+    "include_introspection_probe": false
   },
   "execution": {
     "dry_run": true,
@@ -267,7 +325,25 @@ Configuration profiles can select GraphQL discovery, payload generation, and exe
     "max_mutations_per_payload": 10,
     "max_mutations_per_field": 3,
     "allow_invalid_enum_values": false,
-    "mutate_sensitive_fields": false
+    "mutate_sensitive_fields": false,
+    "enabled_attack_categories": [
+      "INPUT_VALIDATION",
+      "INFORMATION_DISCLOSURE",
+      "SQL_INJECTION",
+      "NOSQL_INJECTION",
+      "COMMAND_INJECTION",
+      "SSRF"
+    ]
+  },
+  "analysis": {
+    "enable_graphql_error_disclosure": true,
+    "enable_graphql_validation_bypass": true,
+    "enable_graphql_introspection_exposure": true,
+    "enable_graphql_reflection_detection": true,
+    "enable_graphql_mass_assignment_detection": true,
+    "enable_graphql_authorization_consistency": true,
+    "enable_graphql_injection_marker_detection": true,
+    "enable_graphql_ssrf_marker_detection": true
   },
   "reporting": {
     "output": "graphql_report.json"
@@ -312,6 +388,8 @@ JSON reports include safe GraphQL metadata:
 - mutation operator counts;
 - attack categories generated;
 - inert markers used;
+- safe SQL, NoSQL, command, and SSRF marker payload counts;
+- GraphQL analysis findings by detector, category, and severity;
 - skipped dry-run and skipped not-authorized counts;
 - `execution_enabled`;
 - `dry_run`.
@@ -320,8 +398,8 @@ Reports do not include raw authentication material.
 
 ## Current Limitations
 
-- No GraphQL-specific vulnerability analysis until Milestone 23.
 - No vulnerability confirmation or overclaiming based on generated probes.
+- No active authz probe execution flags yet.
 - No batching.
 - No subscriptions or WebSocket execution.
 - No live introspection over HTTP.
@@ -329,5 +407,6 @@ Reports do not include raw authentication material.
 - No multipart upload.
 - No GET-based GraphQL execution.
 - No DoS-style deep query generation, aliasing abuse or fragment expansion.
-- No SQL injection, NoSQL injection, command execution, SSRF, cloud metadata, internal IP, executable JavaScript, credential stuffing, or auth bypass probes.
+- No real SQL injection, NoSQL injection, command execution, SSRF, cloud metadata, internal IP,
+  executable JavaScript, credential stuffing, or auth bypass payload strings.
 - The built-in SDL parser intentionally supports a conservative subset.

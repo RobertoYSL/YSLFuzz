@@ -76,6 +76,44 @@ class GraphQLAttackPayloadGenerator:
             mass_assignment = self._mass_assignment_probe(payload)
             if mass_assignment is not None:
                 generated.append(mass_assignment)
+        for category, marker, operator, label in (
+            (
+                AttackCategory.SQL_INJECTION,
+                self.config.inert_sql_marker,
+                "attack_sql_inert_marker",
+                "inert_sql_marker_probe",
+            ),
+            (
+                AttackCategory.NOSQL_INJECTION,
+                self.config.inert_nosql_marker,
+                "attack_nosql_inert_marker",
+                "inert_nosql_marker_probe",
+            ),
+            (
+                AttackCategory.COMMAND_INJECTION,
+                self.config.inert_command_marker,
+                "attack_command_inert_marker",
+                "inert_command_marker_probe",
+            ),
+            (
+                AttackCategory.SSRF,
+                self.config.inert_ssrf_marker,
+                "attack_ssrf_inert_marker",
+                "inert_ssrf_marker_probe",
+            ),
+        ):
+            if self._category_enabled(category):
+                marker_probe = self._variable_probe(
+                    payload,
+                    category,
+                    operator=operator,
+                    marker=marker,
+                    safety_label=label,
+                    target_variable=self._first_string_like_variable(payload),
+                    inert_marker=marker,
+                )
+                if marker_probe is not None:
+                    generated.append(marker_probe)
         del operation
         return generated
 

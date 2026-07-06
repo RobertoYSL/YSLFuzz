@@ -315,6 +315,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum GraphQL requests to plan or execute",
     )
+    scan_parser.add_argument(
+        "--graphql-include-introspection-probe",
+        action="store_true",
+        help="Include a bounded safe GraphQL introspection probe when attack payloads are enabled",
+    )
     scan_parser.set_defaults(func=run_scan_command)
 
     evaluate_parser = subparsers.add_parser(
@@ -751,6 +756,19 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         execution_bundle,
         payloads,
     )
+    analysis_config = _analysis_config_from_args(args)
+    analysis_engine = AnalysisEngine(
+        config=analysis_config,
+        finding_builder=FindingBuilder(deduplicate=not bool(args.no_deduplicate_findings)),
+    )
+    detector_results, findings = _analyze_graphql_execution(
+        analysis_engine=analysis_engine,
+        payloads=payloads,
+        request_records=execution_bundle.request_records,
+        response_records=execution_bundle.response_records,
+        scan_run_id=scan.scan_run_id,
+        enable_analysis=bool(getattr(args, "graphql_enable_analysis", True)),
+    )
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
         endpoints=api_schema.endpoints,
@@ -758,7 +776,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         requests=execution_bundle.request_records,
         responses=execution_bundle.response_records,
         execution_results=execution_bundle.execution_results,
-        findings=[],
+        findings=findings,
     )
     report = JsonReporter().build_report(
         scan,
@@ -767,7 +785,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         requests=execution_bundle.request_records,
         responses=execution_bundle.response_records,
         execution_results=execution_bundle.execution_results,
-        findings=[],
+        findings=findings,
         target=target,
         metrics=metrics,
         metadata={
@@ -802,12 +820,12 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
             "execute_attacks": bool(args.execute_attacks and not args.dry_run),
             "attack_execution_enabled": bool(args.execute_attacks and not args.dry_run),
             "enabled_attack_categories": [category.value for category in attack_categories],
-            "total_detector_results": 0,
-            "total_raw_findings": 0,
-            "total_deduplicated_findings": 0,
+            "total_detector_results": len(detector_results),
+            "total_raw_findings": analysis_engine.last_total_raw_findings,
+            "total_deduplicated_findings": len(findings),
             "deduplicate_findings": not bool(args.no_deduplicate_findings),
-            "analysis_config": _analysis_config_from_args(args).summary(),
-            "analysis_detectors": [],
+            "analysis_config": analysis_config.summary(),
+            "analysis_detectors": analysis_engine.detector_metadata(),
             "mutation_execution_enabled": bool(args.execute_mutations and not args.dry_run),
             "mutation_config": graphql_mutation_config.model_dump(mode="json"),
             "random_seed": graphql_payload_config.seed,
@@ -832,7 +850,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         successful_requests=metrics.successful_requests,
         failed_requests=metrics.failed_requests,
         findings_total=metrics.findings_total,
-        dry_run=True,
+        dry_run=bool(args.dry_run),
     )
     print(
         "GraphQL discovery and payload generation succeeded. "
@@ -1098,6 +1116,9 @@ def _config_overrides_from_args(
         args.graphql_max_requests,
         provided_options,
     )
+    if "--graphql-include-introspection-probe" in provided_options:
+        overrides.setdefault("graphql", {})["include_introspection_probe"] = True
+        overrides.setdefault("payloads", {})["allow_introspection_probe"] = True
     if "--graphql-include-mutations" in provided_options:
         overrides.setdefault("payloads", {})["graphql_include_mutations"] = True
         overrides.setdefault("graphql", {})["include_mutations"] = True
@@ -1256,6 +1277,8 @@ def _args_from_scan_config(
     effective.graphql_endpoint = config.graphql.endpoint_path
     effective.graphql_max_requests = config.graphql.max_requests
     effective.graphql_execute_graphql = config.graphql.execute_graphql
+    effective.graphql_enable_analysis = config.graphql.enable_analysis
+    effective.graphql_include_introspection_probe = config.graphql.include_introspection_probe
     effective.mutate_sensitive_fields = config.payloads.mutate_sensitive_fields
     effective.allow_invalid_enum_values = config.payloads.allow_invalid_enum_values
     effective.disable_type_confusion = config.payloads.disable_type_confusion
@@ -1264,6 +1287,8 @@ def _args_from_scan_config(
     effective.allow_extra_input_fields = config.payloads.allow_extra_input_fields
     effective.allow_missing_required_fields = config.payloads.allow_missing_required_fields
     effective.allow_introspection_probe = config.payloads.allow_introspection_probe
+    if config.graphql.include_introspection_probe:
+        effective.allow_introspection_probe = True
     effective.allow_error_leakage_probe = config.payloads.allow_error_leakage_probe
     effective.allow_reflection_probe = config.payloads.allow_reflection_probe
     effective.i_understand_this_is_authorized = (
@@ -1278,6 +1303,22 @@ def _args_from_scan_config(
         if config.analysis.analysis_min_confidence is not None
         else None
     )
+    effective.enable_graphql_error_disclosure = config.analysis.enable_graphql_error_disclosure
+    effective.enable_graphql_validation_bypass = config.analysis.enable_graphql_validation_bypass
+    effective.enable_graphql_introspection_exposure = (
+        config.analysis.enable_graphql_introspection_exposure
+    )
+    effective.enable_graphql_reflection_detection = config.analysis.enable_graphql_reflection_detection
+    effective.enable_graphql_mass_assignment_detection = (
+        config.analysis.enable_graphql_mass_assignment_detection
+    )
+    effective.enable_graphql_authorization_consistency = (
+        config.analysis.enable_graphql_authorization_consistency
+    )
+    effective.enable_graphql_injection_marker_detection = (
+        config.analysis.enable_graphql_injection_marker_detection
+    )
+    effective.enable_graphql_ssrf_marker_detection = config.analysis.enable_graphql_ssrf_marker_detection
     effective.auth_bearer_env = config.auth.bearer_env
     effective.auth_api_key_env = config.auth.api_key_env
     effective.auth_api_key_header = config.auth.api_key_header
@@ -1493,7 +1534,10 @@ def _graphql_mutation_config_from_args(
         allow_null_mutations=not bool(args.disable_null_mutations),
         allow_extra_input_fields=bool(getattr(args, "allow_extra_input_fields", True)),
         allow_missing_required_fields=bool(getattr(args, "allow_missing_required_fields", True)),
-        allow_introspection_probe=bool(getattr(args, "allow_introspection_probe", False)),
+        allow_introspection_probe=bool(
+            getattr(args, "allow_introspection_probe", False)
+            or getattr(args, "graphql_include_introspection_probe", False)
+        ),
         allow_error_leakage_probe=bool(getattr(args, "allow_error_leakage_probe", True)),
         allow_reflection_probe=bool(getattr(args, "allow_reflection_probe", True)),
         deterministic=True,
@@ -1518,6 +1562,41 @@ def _graphql_payloads_selected_for_execution(
     if execute_attacks:
         selected.extend(attack_payloads)
     return selected
+
+
+def _analyze_graphql_execution(
+    *,
+    analysis_engine: AnalysisEngine,
+    payloads: Sequence[PayloadCandidate],
+    request_records: Sequence[RequestRecord],
+    response_records: Sequence[ResponseRecord],
+    scan_run_id: str,
+    enable_analysis: bool,
+) -> tuple[list[Any], list[Any]]:
+    if not enable_analysis:
+        return [], []
+    payload_by_id = {payload.payload_id: payload for payload in payloads}
+    response_by_request_id = {response.request_id: response for response in response_records}
+    baseline_records: list[tuple[RequestRecord, ResponseRecord]] = []
+    test_records: list[tuple[RequestRecord, ResponseRecord, PayloadCandidate]] = []
+    for request in request_records:
+        if request.payload_id is None:
+            continue
+        payload = payload_by_id.get(request.payload_id)
+        response = response_by_request_id.get(request.request_id)
+        if payload is None or response is None:
+            continue
+        if payload.payload_kind == PayloadKind.VALID:
+            baseline_records.append((request, response))
+        else:
+            test_records.append((request, response, payload))
+    if not baseline_records or not test_records:
+        return [], []
+    return analysis_engine.analyze_records(
+        baseline_records,
+        test_records,
+        scan_run_id=scan_run_id,
+    )
 
 
 def _graphql_payload_generation_summary(
@@ -1585,6 +1664,12 @@ def _graphql_mutation_attack_generation_summary(
     operator_counts: dict[str, int] = {}
     inert_markers: set[str] = set()
     attack_categories: set[str] = set()
+    safe_marker_counts = {
+        "graphql_safe_sql_marker_payloads_generated": 0,
+        "graphql_safe_nosql_marker_payloads_generated": 0,
+        "graphql_safe_command_marker_payloads_generated": 0,
+        "graphql_safe_ssrf_marker_payloads_generated": 0,
+    }
     introspection_probe_generated = False
     for payload in payloads:
         operator = payload.metadata.get("graphql_mutation_operator")
@@ -1597,6 +1682,14 @@ def _graphql_mutation_attack_generation_summary(
             inert_markers.add(marker)
         if payload.attack_category is not None:
             attack_categories.add(payload.attack_category.value)
+            if payload.attack_category == AttackCategory.SQL_INJECTION:
+                safe_marker_counts["graphql_safe_sql_marker_payloads_generated"] += 1
+            elif payload.attack_category == AttackCategory.NOSQL_INJECTION:
+                safe_marker_counts["graphql_safe_nosql_marker_payloads_generated"] += 1
+            elif payload.attack_category == AttackCategory.COMMAND_INJECTION:
+                safe_marker_counts["graphql_safe_command_marker_payloads_generated"] += 1
+            elif payload.attack_category == AttackCategory.SSRF:
+                safe_marker_counts["graphql_safe_ssrf_marker_payloads_generated"] += 1
     skipped_dry_run = non_valid_generated if dry_run else 0
     skipped_not_authorized = 0 if dry_run else max(0, non_valid_generated - non_valid_executed)
     return {
@@ -1618,6 +1711,7 @@ def _graphql_mutation_attack_generation_summary(
         },
         "graphql_inert_markers_used": sorted(inert_markers),
         "graphql_introspection_probe_generated": introspection_probe_generated,
+        **safe_marker_counts,
         "mutation_execution_enabled": mutation_execution_enabled,
         "attack_execution_enabled": attack_execution_enabled,
         "dry_run": dry_run,
@@ -1701,6 +1795,30 @@ def _analysis_config_from_args(args: argparse.Namespace) -> AnalysisConfig:
     return AnalysisConfig(
         disabled_detectors=list(args.disable_detector),
         minimum_confidence=confidence,
+        enable_graphql_error_disclosure=bool(
+            getattr(args, "enable_graphql_error_disclosure", True)
+        ),
+        enable_graphql_validation_bypass=bool(
+            getattr(args, "enable_graphql_validation_bypass", True)
+        ),
+        enable_graphql_introspection_exposure=bool(
+            getattr(args, "enable_graphql_introspection_exposure", True)
+        ),
+        enable_graphql_reflection_detection=bool(
+            getattr(args, "enable_graphql_reflection_detection", True)
+        ),
+        enable_graphql_mass_assignment_detection=bool(
+            getattr(args, "enable_graphql_mass_assignment_detection", True)
+        ),
+        enable_graphql_authorization_consistency=bool(
+            getattr(args, "enable_graphql_authorization_consistency", True)
+        ),
+        enable_graphql_injection_marker_detection=bool(
+            getattr(args, "enable_graphql_injection_marker_detection", True)
+        ),
+        enable_graphql_ssrf_marker_detection=bool(
+            getattr(args, "enable_graphql_ssrf_marker_detection", True)
+        ),
     )
 
 

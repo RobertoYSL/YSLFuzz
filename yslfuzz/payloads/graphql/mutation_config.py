@@ -32,6 +32,10 @@ class GraphQLMutationConfig(YSLFuzzModel):
     inert_reflection_marker: str = "yslfuzz_graphql_reflection_marker"
     inert_extra_field_name: str = "yslfuzz_extra_field"
     inert_extra_field_value: str = "yslfuzz_extra_value"
+    inert_sql_marker: str = "yslfuzz_graphql_sql_marker"
+    inert_nosql_marker: str = "yslfuzz_graphql_nosql_marker"
+    inert_command_marker: str = "yslfuzz_graphql_command_marker"
+    inert_ssrf_marker: str = "https://yslfuzz-ssrf-marker.invalid/resource"
     enabled_payload_kinds: list[str] = Field(default_factory=list, exclude=True)
 
     @property
@@ -60,5 +64,9 @@ class GraphQLMutationConfig(YSLFuzzModel):
                 AttackCategory.INFORMATION_DISCLOSURE,
                 AttackCategory.XSS,
                 AttackCategory.MASS_ASSIGNMENT,
+                AttackCategory.SQL_INJECTION,
+                AttackCategory.NOSQL_INJECTION,
+                AttackCategory.COMMAND_INJECTION,
+                AttackCategory.SSRF,
             }
         return set(self.enabled_attack_categories)

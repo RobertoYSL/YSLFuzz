@@ -33,6 +33,37 @@ RECOMMENDATIONS: dict[str, str] = {
     "detector_basic_authorization_bypass": (
         "Enforce authentication and authorization checks on every protected endpoint and object access path."
     ),
+    "detector_graphql_error_disclosure": (
+        "Normalize GraphQL error responses and keep stack traces, resolver details, and "
+        "internal exception messages in protected logs."
+    ),
+    "detector_graphql_validation_bypass": (
+        "Enforce GraphQL schema validation and resolver-level business validation before "
+        "processing variables."
+    ),
+    "detector_graphql_introspection_exposure": (
+        "Disable or restrict GraphQL introspection in production when it is not required."
+    ),
+    "detector_graphql_reflection": (
+        "Avoid reflecting untrusted GraphQL variable values, or encode them for the response "
+        "context before returning them."
+    ),
+    "detector_graphql_mass_assignment": (
+        "Validate and reject unknown GraphQL input object fields, and use explicit allowlists "
+        "for writable resolver fields."
+    ),
+    "detector_graphql_authorization_consistency": (
+        "Enforce resolver-level authorization checks and compare behavior across configured "
+        "authentication profiles."
+    ),
+    "detector_graphql_injection_marker": (
+        "Parameterize data access, validate resolver inputs, and avoid passing user-controlled "
+        "GraphQL values into database or system APIs."
+    ),
+    "detector_graphql_ssrf_marker": (
+        "Validate URL-like GraphQL inputs server-side and block internal, link-local, and "
+        "metadata destinations."
+    ),
 }
 
 
@@ -45,6 +76,14 @@ TITLES: dict[str, str] = {
     "detector_validation_bypass": "Possible Validation Bypass",
     "detector_mass_assignment": "Possible Mass Assignment",
     "detector_basic_authorization_bypass": "Possible Broken Access Control",
+    "detector_graphql_error_disclosure": "Possible GraphQL Error Disclosure",
+    "detector_graphql_validation_bypass": "Possible GraphQL Validation Bypass",
+    "detector_graphql_introspection_exposure": "Possible GraphQL Introspection Exposure",
+    "detector_graphql_reflection": "Possible GraphQL Marker Reflection",
+    "detector_graphql_mass_assignment": "Possible GraphQL Mass Assignment",
+    "detector_graphql_authorization_consistency": "Possible GraphQL Broken Access Control",
+    "detector_graphql_injection_marker": "Possible GraphQL Injection Marker Signal",
+    "detector_graphql_ssrf_marker": "Possible GraphQL SSRF Handling Signal",
 }
 
 
@@ -99,6 +138,9 @@ class FindingBuilder:
                         "detector_name": detector_name,
                         "detector_version": result.metadata.get("detector_version"),
                         "endpoint_identity": result.metadata.get("endpoint_identity"),
+                        "api_style": result.metadata.get("api_style"),
+                        "graphql_operation_name": result.metadata.get("graphql_operation_name"),
+                        "graphql_operation_type": result.metadata.get("graphql_operation_type"),
                         "detector_result_ids": [result.detector_result_id],
                         "deduplicated_count": 1,
                         "status_code_class": result.metadata.get("status_code_class"),
@@ -114,6 +156,9 @@ class FindingBuilder:
         return output
 
     def _title(self, result: DetectorResult) -> str:
+        graphql_title = result.metadata.get("graphql_title")
+        if isinstance(graphql_title, str) and graphql_title:
+            return graphql_title
         if result.detector_id in TITLES:
             return TITLES[result.detector_id]
         detector_name = result.metadata.get("detector_name", "Detector")

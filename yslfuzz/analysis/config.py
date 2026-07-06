@@ -21,6 +21,16 @@ class AnalysisConfig(YSLFuzzModel):
     enable_validation_bypass_detection: bool = True
     enable_mass_assignment_detection: bool = True
     enable_authz_bypass_detection: bool = True
+    enable_graphql_error_disclosure: bool = True
+    enable_graphql_validation_bypass: bool = True
+    enable_graphql_introspection_exposure: bool = True
+    enable_graphql_reflection_detection: bool = True
+    enable_graphql_mass_assignment_detection: bool = True
+    enable_graphql_authorization_consistency: bool = True
+    enable_graphql_injection_marker_detection: bool = True
+    enable_graphql_ssrf_marker_detection: bool = True
+    max_error_messages_to_analyze: int = 10
+    max_evidence_preview_chars: int = 300
     response_size_delta_threshold_ratio: float = 0.5
     response_time_delta_threshold_ms: float = 250.0
 
@@ -48,6 +58,14 @@ class AnalysisConfig(YSLFuzzModel):
             raise ValueError("response_time_delta_threshold_ms must be non-negative")
         return value
 
+    @field_validator("max_error_messages_to_analyze", "max_evidence_preview_chars")
+    @classmethod
+    def validate_graphql_analysis_limits(cls, value: int) -> int:
+        """Require bounded positive GraphQL analysis limits."""
+        if value <= 0:
+            raise ValueError("GraphQL analysis limits must be greater than 0")
+        return value
+
     def summary(self) -> dict[str, object]:
         """Return a stable non-sensitive configuration summary for reports."""
         return {
@@ -67,6 +85,22 @@ class AnalysisConfig(YSLFuzzModel):
             "enable_validation_bypass_detection": self.enable_validation_bypass_detection,
             "enable_mass_assignment_detection": self.enable_mass_assignment_detection,
             "enable_authz_bypass_detection": self.enable_authz_bypass_detection,
+            "enable_graphql_error_disclosure": self.enable_graphql_error_disclosure,
+            "enable_graphql_validation_bypass": self.enable_graphql_validation_bypass,
+            "enable_graphql_introspection_exposure": self.enable_graphql_introspection_exposure,
+            "enable_graphql_reflection_detection": self.enable_graphql_reflection_detection,
+            "enable_graphql_mass_assignment_detection": (
+                self.enable_graphql_mass_assignment_detection
+            ),
+            "enable_graphql_authorization_consistency": (
+                self.enable_graphql_authorization_consistency
+            ),
+            "enable_graphql_injection_marker_detection": (
+                self.enable_graphql_injection_marker_detection
+            ),
+            "enable_graphql_ssrf_marker_detection": self.enable_graphql_ssrf_marker_detection,
+            "max_error_messages_to_analyze": self.max_error_messages_to_analyze,
+            "max_evidence_preview_chars": self.max_evidence_preview_chars,
             "response_size_delta_threshold_ratio": self.response_size_delta_threshold_ratio,
             "response_time_delta_threshold_ms": self.response_time_delta_threshold_ms,
         }

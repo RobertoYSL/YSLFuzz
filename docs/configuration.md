@@ -23,9 +23,9 @@ Top-level sections:
 - `safety`: authorization-gate and redaction controls
 - `metadata`: scan name, notes, and tags
 
-Configuration profiles support REST/OpenAPI scans and local GraphQL schema scans. GraphQL execution
-settings are limited to valid payload execution; GraphQL attack and mutation payload settings are
-reserved for later milestones.
+Configuration profiles support REST/OpenAPI scans and local GraphQL schema scans. GraphQL settings
+cover discovery, valid payload generation, execution, safe non-valid payload generation, inert marker
+attack payload generation, and conservative GraphQL analysis.
 
 ## Safe Defaults
 
@@ -137,7 +137,9 @@ GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_p
     "max_fields_per_selection": 5,
     "include_queries": true,
     "include_mutations": true,
-    "max_requests": 20
+    "max_requests": 20,
+    "enable_analysis": true,
+    "include_introspection_probe": false
   },
   "payloads": {
     "include_boundary_payloads": true,
@@ -149,7 +151,25 @@ GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_p
     "allow_invalid_enum_values": false,
     "mutate_sensitive_fields": false,
     "allow_extra_input_fields": true,
-    "allow_missing_required_fields": true
+    "allow_missing_required_fields": true,
+    "enabled_attack_categories": [
+      "INPUT_VALIDATION",
+      "INFORMATION_DISCLOSURE",
+      "SQL_INJECTION",
+      "NOSQL_INJECTION",
+      "COMMAND_INJECTION",
+      "SSRF"
+    ]
+  },
+  "analysis": {
+    "enable_graphql_error_disclosure": true,
+    "enable_graphql_validation_bypass": true,
+    "enable_graphql_introspection_exposure": true,
+    "enable_graphql_reflection_detection": true,
+    "enable_graphql_mass_assignment_detection": true,
+    "enable_graphql_authorization_consistency": true,
+    "enable_graphql_injection_marker_detection": true,
+    "enable_graphql_ssrf_marker_detection": true
   },
   "execution": {
     "dry_run": true,
@@ -184,7 +204,9 @@ Benchmark configs remain separate from scan configuration profiles for this MVP.
 
 ## Limitations
 
-- No GraphQL mutation, invalid, boundary or attack payload configuration yet.
+- GraphQL active authorization probe execution is not implemented; analysis can consume explicitly paired records.
+- GraphQL analysis is conservative and does not confirm vulnerabilities.
+- GraphQL SQL, NoSQL, command and SSRF category support uses inert markers only.
 - No config inheritance or profile composition.
 - No remote config URLs.
 - No secret manager integration.
