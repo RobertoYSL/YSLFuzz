@@ -133,6 +133,12 @@ class PayloadsConfigSection(ConfigModel):
     disable_boundary_values: bool = False
     disable_null_mutations: bool = False
     mutate_sensitive_fields: bool = False
+    graphql_include_queries: bool = True
+    graphql_include_mutations: bool = True
+    graphql_include_subscriptions: bool = False
+    graphql_max_operations: int | None = None
+    graphql_max_selection_depth: int = 2
+    graphql_max_fields_per_selection: int = 5
 
     @model_validator(mode="after")
     def validate_limits(self) -> "PayloadsConfigSection":
@@ -143,6 +149,12 @@ class PayloadsConfigSection(ConfigModel):
             raise ValueError("max_mutations_per_field must be non-negative")
         if self.max_attack_requests_per_endpoint < 0:
             raise ValueError("max_attack_requests_per_endpoint must be non-negative")
+        if self.graphql_max_operations is not None and self.graphql_max_operations < 0:
+            raise ValueError("graphql_max_operations must be non-negative")
+        if self.graphql_max_selection_depth < 0:
+            raise ValueError("graphql_max_selection_depth must be non-negative")
+        if self.graphql_max_fields_per_selection <= 0:
+            raise ValueError("graphql_max_fields_per_selection must be greater than 0")
         return self
 
 
@@ -256,4 +268,7 @@ class ScanConfig(ConfigModel):
             "include_invalid_payloads": self.payloads.include_invalid_payloads,
             "include_mutated_payloads": self.payloads.include_mutated_payloads,
             "include_attack_payloads": self.payloads.include_attack_payloads,
+            "graphql_include_queries": self.payloads.graphql_include_queries,
+            "graphql_include_mutations": self.payloads.graphql_include_mutations,
+            "graphql_include_subscriptions": self.payloads.graphql_include_subscriptions,
         }

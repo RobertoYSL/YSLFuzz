@@ -76,6 +76,8 @@ from yslfuzz.models.schema import Endpoint
 from yslfuzz.payloads import (
     AttackGenerationConfig,
     AttackPayloadGenerator,
+    GraphQLPayloadConfig,
+    GraphQLPayloadGenerator,
     MutationConfig,
     MutationEngine,
     PayloadGenerator,
@@ -263,6 +265,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Custom auth header mapping HEADER_NAME:ENV_VAR; may be repeated",
+    )
+    scan_parser.add_argument(
+        "--graphql-max-selection-depth",
+        type=int,
+        default=2,
+        help="Maximum GraphQL valid payload selection depth",
+    )
+    scan_parser.add_argument(
+        "--graphql-max-fields-per-selection",
+        type=int,
+        default=5,
+        help="Maximum fields selected in each GraphQL selection set",
+    )
+    scan_parser.add_argument(
+        "--graphql-include-mutations",
+        action="store_true",
+        help="Include GraphQL mutation operations in generated valid payloads",
+    )
+    scan_parser.add_argument(
+        "--graphql-queries-only",
+        action="store_true",
+        help="Generate GraphQL query payloads only",
+    )
+    scan_parser.add_argument(
+        "--graphql-mutations-only",
+        action="store_true",
+        help="Generate GraphQL mutation payloads only",
+    )
+    scan_parser.add_argument(
+        "--graphql-max-operations",
+        type=int,
+        default=None,
+        help="Maximum GraphQL operation payloads to generate",
     )
     scan_parser.set_defaults(func=run_scan_command)
 
@@ -630,10 +665,12 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         raise ValueError("--max-requests must be greater than or equal to 0")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than 0")
+    graphql_payload_config = _graphql_payload_config_from_args(args)
 
     loader = GraphQLSchemaLoader()
     graphql_schema = loader.load(graphql_schema_path)
     api_schema = GraphQLToApiSchemaMapper().map(graphql_schema, base_url=args.base_url)
+    payloads = GraphQLPayloadGenerator(graphql_payload_config).generate(graphql_schema)
     target = _target_from_args(
         args.base_url,
         args.allow_destructive,
@@ -653,7 +690,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
         endpoints=api_schema.endpoints,
-        payloads=[],
+        payloads=payloads,
         requests=[],
         responses=[],
         execution_results=[],
@@ -662,7 +699,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     report = JsonReporter().build_report(
         scan,
         api_schema=api_schema,
-        payloads=[],
+        payloads=payloads,
         requests=[],
         responses=[],
         execution_results=[],
@@ -672,12 +709,17 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         metadata={
             "dry_run": True,
             "api_style": "graphql",
-            "graphql_discovery_only": True,
+            "graphql_discovery_only": False,
             "graphql_discovery_summary": graphql_schema.discovery_summary(),
-            "graphql_payload_generation_implemented": False,
+            "graphql_payload_generation_implemented": True,
+            "graphql_payload_generation": _graphql_payload_generation_summary(
+                graphql_schema,
+                payloads,
+                graphql_payload_config,
+            ),
             "scan_status_message": (
-                "GraphQL payload generation is not implemented yet. "
-                "GraphQL discovery succeeded, but scanning GraphQL operations requires Milestone 20."
+                "GraphQL discovery and valid payload generation succeeded. "
+                "GraphQL execution is not implemented until Milestone 21."
             ),
             "include_attack_payloads": False,
             "execute_attacks": False,
@@ -691,7 +733,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
             "analysis_detectors": [],
             "mutation_execution_enabled": False,
             "mutation_config": _mutation_config_from_args(args).model_dump(mode="json"),
-            "random_seed": 0,
+            "random_seed": graphql_payload_config.seed,
             "max_mutations_per_payload": args.max_mutations_per_payload,
             "max_mutations_per_field": args.max_mutations_per_field,
             **_auth_report_metadata(auth_profile),
@@ -716,8 +758,9 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         dry_run=True,
     )
     print(
-        "GraphQL discovery succeeded. GraphQL payload generation is not implemented yet; "
-        "scanning GraphQL operations requires Milestone 20."
+        "GraphQL discovery and payload generation succeeded. "
+        f"Generated {metrics.valid_payloads_generated} valid GraphQL payloads. "
+        "GraphQL execution is not implemented until Milestone 21; executed zero HTTP requests."
     )
     return 0
 
@@ -913,6 +956,38 @@ def _config_overrides_from_args(
         args.max_attack_requests_per_endpoint,
         provided_options,
     )
+    _set_override(
+        overrides,
+        "payloads",
+        "graphql_max_selection_depth",
+        "--graphql-max-selection-depth",
+        args.graphql_max_selection_depth,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "payloads",
+        "graphql_max_fields_per_selection",
+        "--graphql-max-fields-per-selection",
+        args.graphql_max_fields_per_selection,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "payloads",
+        "graphql_max_operations",
+        "--graphql-max-operations",
+        args.graphql_max_operations,
+        provided_options,
+    )
+    if "--graphql-include-mutations" in provided_options:
+        overrides.setdefault("payloads", {})["graphql_include_mutations"] = True
+    if "--graphql-queries-only" in provided_options:
+        overrides.setdefault("payloads", {})["graphql_include_queries"] = True
+        overrides.setdefault("payloads", {})["graphql_include_mutations"] = False
+    if "--graphql-mutations-only" in provided_options:
+        overrides.setdefault("payloads", {})["graphql_include_queries"] = False
+        overrides.setdefault("payloads", {})["graphql_include_mutations"] = True
     if "--attack-category" in provided_options:
         overrides.setdefault("payloads", {})["enabled_attack_categories"] = [
             str(category).upper() for category in args.attack_category
@@ -1027,6 +1102,16 @@ def _args_from_scan_config(
     effective.max_mutations_per_payload = config.payloads.max_mutations_per_payload
     effective.max_mutations_per_field = config.payloads.max_mutations_per_field
     effective.max_attack_requests_per_endpoint = config.payloads.max_attack_requests_per_endpoint
+    effective.graphql_max_selection_depth = config.payloads.graphql_max_selection_depth
+    effective.graphql_max_fields_per_selection = config.payloads.graphql_max_fields_per_selection
+    effective.graphql_max_operations = config.payloads.graphql_max_operations
+    effective.graphql_include_mutations = config.payloads.graphql_include_mutations
+    effective.graphql_queries_only = (
+        config.payloads.graphql_include_queries and not config.payloads.graphql_include_mutations
+    )
+    effective.graphql_mutations_only = (
+        config.payloads.graphql_include_mutations and not config.payloads.graphql_include_queries
+    )
     effective.mutate_sensitive_fields = config.payloads.mutate_sensitive_fields
     effective.allow_invalid_enum_values = config.payloads.allow_invalid_enum_values
     effective.disable_type_confusion = config.payloads.disable_type_confusion
@@ -1185,6 +1270,66 @@ def _mutation_config_from_args(args: argparse.Namespace) -> MutationConfig:
         allow_boundary_values=not bool(args.disable_boundary_values),
         allow_null_mutations=not bool(args.disable_null_mutations),
     )
+
+
+def _graphql_payload_config_from_args(args: argparse.Namespace) -> GraphQLPayloadConfig:
+    if args.graphql_queries_only and args.graphql_mutations_only:
+        raise ValueError("--graphql-queries-only conflicts with --graphql-mutations-only")
+    include_queries = True
+    include_mutations = True
+    if args.graphql_queries_only:
+        include_mutations = False
+    if args.graphql_mutations_only:
+        include_queries = False
+    if args.graphql_include_mutations:
+        include_mutations = True
+    return GraphQLPayloadConfig(
+        include_queries=include_queries,
+        include_mutations=include_mutations,
+        include_subscriptions=False,
+        max_operations=args.graphql_max_operations,
+        max_selection_depth=args.graphql_max_selection_depth,
+        max_fields_per_selection=args.graphql_max_fields_per_selection,
+        deterministic=True,
+        random_seed=0,
+    )
+
+
+def _graphql_payload_generation_summary(
+    schema: object,
+    payloads: Sequence[PayloadCandidate],
+    config: GraphQLPayloadConfig,
+) -> dict[str, Any]:
+    query_count = sum(
+        payload.metadata.get("graphql_operation_type") == "query"
+        for payload in payloads
+    )
+    mutation_count = sum(
+        payload.metadata.get("graphql_operation_type") == "mutation"
+        for payload in payloads
+    )
+    subscription_count = sum(
+        payload.metadata.get("graphql_operation_type") == "subscription"
+        for payload in payloads
+    )
+    schema_id = getattr(schema, "schema_id", None)
+    return {
+        "api_style": "graphql",
+        "graphql_schema_id": schema_id,
+        "graphql_payloads_generated": len(payloads),
+        "graphql_query_payloads_generated": query_count,
+        "graphql_mutation_payloads_generated": mutation_count,
+        "graphql_subscription_payloads_generated": subscription_count,
+        "generated_operation_names": [
+            str(payload.metadata.get("graphql_operation_name"))
+            for payload in payloads
+            if payload.metadata.get("graphql_operation_name") is not None
+        ],
+        "max_selection_depth": config.max_selection_depth,
+        "max_fields_per_selection": config.max_fields_per_selection,
+        "execution_enabled": False,
+        "note": "GraphQL execution is not implemented until Milestone 21.",
+    }
 
 
 def _analysis_config_from_args(args: argparse.Namespace) -> AnalysisConfig:

@@ -67,6 +67,36 @@ def test_json_report_includes_payload_generation_summary() -> None:
     assert summary["max_mutations_per_payload"] == 5
 
 
+def test_json_report_includes_graphql_payload_generation_summary() -> None:
+    graphql_summary = {
+        "api_style": "graphql",
+        "graphql_schema_id": "graphql_schema_1",
+        "graphql_payloads_generated": 2,
+        "graphql_query_payloads_generated": 1,
+        "graphql_mutation_payloads_generated": 1,
+        "graphql_subscription_payloads_generated": 0,
+        "generated_operation_names": ["YSLFuzzUser", "YSLFuzzCreateuser"],
+        "max_selection_depth": 2,
+        "max_fields_per_selection": 5,
+        "execution_enabled": False,
+        "note": "GraphQL execution is not implemented until Milestone 21.",
+    }
+
+    report = JsonReporter().build_report(
+        ScanRun(
+            scan_run_id="scan_1",
+            project_id="project_1",
+            target_id="target_1",
+            scan_config_id="scan_config_1",
+            api_schema_id="api_schema_1",
+        ),
+        metadata={"graphql_payload_generation": graphql_summary},
+    )
+    summary = JsonReporter().to_dict(report)["payload_generation_summary"]
+
+    assert summary["graphql_payload_generation"] == graphql_summary
+
+
 def _payload(
     payload_id: str,
     kind: PayloadKind,

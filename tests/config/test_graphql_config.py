@@ -22,6 +22,33 @@ def test_config_graphql_fields_work_if_implemented() -> None:
     assert config.target.api_style == ApiStyle.GRAPHQL
     assert config.target.graphql_schema_path == "examples/graphql/simple_users_schema.graphql"
     assert config.target.openapi_path is None
+    assert config.payloads.graphql_max_selection_depth == 2
+    assert config.payloads.graphql_max_fields_per_selection == 5
+
+
+def test_config_graphql_payload_fields_work_if_implemented() -> None:
+    config = ScanConfig.model_validate(
+        {
+            "target": {
+                "api_style": "GRAPHQL",
+                "graphql_schema_path": "examples/graphql/simple_users_schema.graphql",
+                "base_url": "http://localhost:8080",
+            },
+            "payloads": {
+                "graphql_include_queries": False,
+                "graphql_include_mutations": True,
+                "graphql_max_selection_depth": 1,
+                "graphql_max_fields_per_selection": 2,
+                "graphql_max_operations": 1,
+            },
+        }
+    )
+
+    assert config.payloads.graphql_include_queries is False
+    assert config.payloads.graphql_include_mutations is True
+    assert config.payloads.graphql_max_selection_depth == 1
+    assert config.payloads.graphql_max_fields_per_selection == 2
+    assert config.payloads.graphql_max_operations == 1
 
 
 def test_config_graphql_rejects_mixed_openapi_and_graphql_inputs() -> None:

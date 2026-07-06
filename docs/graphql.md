@@ -1,7 +1,6 @@
-# GraphQL Discovery
+# GraphQL Discovery and Payload Generation
 
-YSLFuzz currently supports a GraphQL Discovery MVP. It can parse local GraphQL schema files and local introspection JSON files, extract operations and type information, and map those operations into the internal `ApiSchema` model.
-
+YSLFuzz supports local GraphQL discovery and deterministic valid GraphQL payload generation.
 This milestone does not execute GraphQL operations.
 
 ## Supported Inputs
@@ -11,59 +10,108 @@ Supported local files:
 - GraphQL SDL: `.graphql`, `.gql`
 - GraphQL introspection JSON: `.json`
 
-No live introspection, remote schema fetching, or HTTP requests are performed.
+No live introspection, remote schema fetching, or HTTP requests are performed while loading schemas.
 
-## SDL Subset
+## Discovery
 
-The built-in SDL parser is conservative because no GraphQL parser dependency is currently configured in the project. It supports:
+The discovery layer parses local SDL or introspection JSON into `GraphQLSchema`, then maps root
+fields into the internal `ApiSchema` model.
 
-- `type` definitions
-- `input` definitions
-- `enum` definitions
-- `scalar` names
-- `Query`, `Mutation`, and `Subscription` root operation types
-- field arguments
-- list wrappers
-- non-null wrappers
-- comments
-- directives ignored during parsing
+Each GraphQL root field is mapped to an endpoint-like operation:
 
-It is not a full GraphQL specification parser. Advanced SDL features such as unions, interfaces, schema definition blocks, extensions, fragments, executable documents, and complex directive semantics are not supported in this milestone.
+- synthetic method: `POST`
+- synthetic path: `/graphql`
+- `api_style`: `GRAPHQL`
+- GraphQL arguments become `GRAPHQL_ARGUMENT` parameters
+- return type is stored in response metadata
 
-## Introspection JSON Subset
+The conservative SDL parser supports object, input, enum, scalar, Query, Mutation and Subscription
+definitions, field arguments, list wrappers and non-null wrappers. It is not a complete GraphQL
+specification parser.
 
-The introspection parser supports a minimal standard structure containing:
+## Valid Payload Generation
 
-- `__schema`
-- `types`
-- `queryType`
-- `mutationType`
-- `subscriptionType` when present
+`GraphQLPayloadGenerator` generates safe `PayloadCandidate` objects from a parsed `GraphQLSchema`.
+Each candidate body uses the future GraphQL-over-HTTP JSON shape:
 
-The parser accepts either `{"__schema": ...}` or `{"data": {"__schema": ...}}`.
+```json
+{
+  "query": "query YSLFuzzUser($id: ID!) { user(id: $id) { id email } }",
+  "variables": {
+    "id": "yslfuzz-id-001"
+  },
+  "operationName": "YSLFuzzUser"
+}
+```
 
-## CLI
+Generated payloads are `PayloadKind.VALID`, use `content_type="application/json"`, and include
+GraphQL metadata such as operation name, operation type, return type, variable names, selection
+depth, source schema ID and payload generation version.
 
-Run GraphQL discovery and write a discovery report:
+## Scalar and Enum Values
+
+Built-in scalar values are deterministic:
+
+- `ID`: `yslfuzz-id-001`
+- `String`: `yslfuzz-string`
+- `Int`: `1`
+- `Float`: `1.0`
+- `Boolean`: `true`
+
+Email-like custom scalars use `yslfuzz@example.invalid`. Other custom scalars use the conservative
+string `yslfuzz-string`. Enum generation chooses the first allowed enum value deterministically.
+
+No secrets, tokens, cookies, API keys, passwords, JWTs, or real credentials are generated.
+
+## Variables and Input Objects
+
+Variables are enabled by default. Operation arguments become variable definitions and variable
+bindings. Input objects include required and optional fields within the configured bounds. Nested
+input objects and lists are bounded by `max_input_depth` and `max_list_items`.
+
+If `generate_variables` is disabled in code, safe literals are inlined instead.
+
+## Selection Sets
+
+Selection sets are deterministic and bounded:
+
+- scalar and enum fields are selected directly;
+- object and list return types receive nested selection sets;
+- cycles are avoided;
+- fields with required arguments are skipped inside selection sets;
+- deprecated fields are skipped when metadata marks them deprecated;
+- `__typename` is included only when configured.
+
+Default limits are `max_selection_depth=2` and `max_fields_per_selection=5`.
+
+## CLI Usage
+
+Generate GraphQL discovery and payload summary without HTTP execution:
 
 ```bash
 uv run yslfuzz scan \
   --graphql-schema examples/graphql/simple_users_schema.graphql \
   --base-url http://localhost:8080 \
+  --dry-run \
   --output graphql_report.json
 ```
 
-OpenAPI and GraphQL inputs are mutually exclusive:
+Useful optional flags:
 
 ```bash
-uv run yslfuzz scan --openapi openapi.yaml --graphql-schema schema.graphql
+--graphql-max-selection-depth 2
+--graphql-max-fields-per-selection 5
+--graphql-queries-only
+--graphql-mutations-only
+--graphql-max-operations 10
 ```
 
-The command above is rejected.
+The CLI always executes zero GraphQL HTTP requests in this milestone and prints a clear message
+that GraphQL execution is planned for Milestone 21.
 
 ## Configuration
 
-Configuration profiles can select GraphQL discovery:
+Configuration profiles can select GraphQL discovery and payload generation:
 
 ```json
 {
@@ -71,6 +119,14 @@ Configuration profiles can select GraphQL discovery:
     "api_style": "GRAPHQL",
     "graphql_schema_path": "examples/graphql/simple_users_schema.graphql",
     "base_url": "http://localhost:8080"
+  },
+  "payloads": {
+    "graphql_include_queries": true,
+    "graphql_include_mutations": true,
+    "graphql_include_subscriptions": false,
+    "graphql_max_selection_depth": 2,
+    "graphql_max_fields_per_selection": 5,
+    "graphql_max_operations": 10
   },
   "execution": {
     "dry_run": true
@@ -81,47 +137,31 @@ Configuration profiles can select GraphQL discovery:
 }
 ```
 
-GraphQL config support only loads and reports schema discovery. It does not enable GraphQL payload generation or execution.
+Config support is limited to local schema discovery and valid payload generation. It does not enable
+GraphQL execution.
 
-## ApiSchema Mapping
+## Reporting
 
-Each GraphQL root field is mapped to an endpoint-like operation:
+JSON reports include safe GraphQL metadata:
 
-- synthetic method: `POST`
-- synthetic path: `/graphql`
-- `api_style`: `GRAPHQL`
-- GraphQL arguments become `GRAPHQL_ARGUMENT` parameters
-- return type is stored in response metadata
-- operation metadata includes:
-  - `graphql_operation_name`
-  - `graphql_operation_type`
-  - `graphql_return_type`
-  - `graphql_arguments`
-  - `graphql_source_format`
-  - `graphql_schema_id`
+- `api_style: graphql`
+- `graphql_schema_id`
+- generated payload counts by query, mutation and subscription;
+- generated operation names;
+- configured selection limits;
+- `execution_enabled: false`;
+- a note that GraphQL execution is not implemented until Milestone 21.
 
-Reports include GraphQL discovery summaries with operation counts, type counts, and an operation list. Full raw schemas are not embedded in reports.
+Reports do not include raw authentication material. Query bodies are present as payload bodies in
+the internal report model and remain subject to the existing report redaction layer.
 
-## Not Supported Yet
+## Current Limitations
 
-The following are intentionally out of scope for this milestone:
-
-- GraphQL payload generation
-- GraphQL request execution
-- GraphQL mutation payloads
-- GraphQL attack payloads
-- GraphQL-specific vulnerability analysis
-- depth-limit probes
-- batching probes
-- DoS-style probes
-- live introspection over HTTP
-- remote schema fetching
-
-## Roadmap
-
-Planned next GraphQL milestones:
-
-- Milestone 20: GraphQL Payload Generation MVP
-- Milestone 21: GraphQL Execution MVP
-- Milestone 22: GraphQL Mutation and Attack Payload MVP
-- Milestone 23: GraphQL Analysis MVP
+- No GraphQL HTTP execution until Milestone 21.
+- No GraphQL invalid, boundary, mutation or attack payloads until Milestone 22.
+- No GraphQL-specific vulnerability analysis until Milestone 23.
+- No live introspection over HTTP.
+- No remote schema fetching.
+- No DoS-style deep query generation, batching probes, aliasing abuse or fragment expansion.
+- No authentication-specific GraphQL behavior.
+- The built-in SDL parser intentionally supports a conservative subset.
