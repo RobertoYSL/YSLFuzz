@@ -1,128 +1,69 @@
-# Performance, Rate Limiting, and Scan Stability
+# Performance and Stability
 
-YSLFuzz includes bounded scan controls for predictable local and authorized scans. These controls do
-not add attack behavior. They limit scheduling, pace HTTP execution, and report skipped work.
+YSLFuzz includes scan-level controls to keep scans bounded, reproducible, and easier to
+review.
 
-## Request Budgets
+## Scan Limits
 
-Scan limits are configured through CLI flags or config profiles:
+Limits can be supplied through CLI flags or config:
 
-- `max_requests`: global request cap.
-- `max_requests_per_endpoint`: per-endpoint request cap.
-- `max_duration_seconds`: global scheduling timeout.
-- `max_graphql_requests`: GraphQL-specific request cap.
-- `max_rest_requests`: REST-specific request cap.
+- global request budget;
+- per-endpoint request budget;
+- total payload budget;
+- max scan duration;
+- GraphQL request budget;
+- REST request budget.
 
-Budgets are checked before scheduling where possible. Skipped requests are counted in report
-metadata.
+Skipped requests are counted for reporting where the execution path can account for them.
+
+## CLI Flags
+
+```bash
+uv run yslfuzz scan \
+  --openapi examples/openapi/simple_users_api.yaml \
+  --base-url http://localhost:8000 \
+  --max-requests 50 \
+  --max-requests-per-endpoint 10 \
+  --max-scan-duration-seconds 60 \
+  --rate-limit-rps 2 \
+  --min-request-delay-ms 100 \
+  --progress \
+  --dry-run \
+  --output reports/stable_scan.json
+```
 
 ## Rate Limiting
 
-Rate limiting is disabled by default.
-
-CLI flags:
-
-```bash
---rate-limit-rps 2.0
---min-request-delay-ms 100
-```
-
-When enabled, the synchronous executor waits before real HTTP requests. Dry-run does not execute
-HTTP requests and therefore does not need pacing.
+Rate limiting is disabled by default. When configured, YSLFuzz can enforce approximate
+requests-per-second spacing and/or a minimum delay between real HTTP requests. Dry-run skips
+execution before rate limiting.
 
 ## Retry and Backoff
 
-Retries are disabled by default.
-
-CLI flags:
-
-```bash
---retry
---max-retries 2
---retry-status-code 429
---retry-status-code 503
---backoff-initial-ms 100
---backoff-max-ms 1000
-```
-
-Retry behavior is conservative:
-
-- bounded retry count;
-- no jitter by default;
-- deterministic exponential backoff;
-- default retry status codes: `429`, `500`, `502`, `503`, `504`;
-- unsafe methods and GraphQL POST requests are not retried by default.
+Retries are disabled by default. When enabled, retry attempts are bounded by `max_retries`
+and deterministic backoff settings. Default retry status codes are `429`, `500`, `502`,
+`503`, and `504`. Unsafe methods and GraphQL POST retries remain conservative unless
+explicitly enabled by lower-level configuration.
 
 ## Global Timeout
 
-`--max-scan-duration-seconds` stops scheduling new requests after the configured duration. YSLFuzz
-writes a partial report with `scan_status: timed_out` when timeout accounting is reached.
+A max scan duration stops scheduling new requests once the budget is reached. The current
+request may finish, remaining work is skipped, and partial metrics can be reported.
 
 ## Progress
 
-`--progress` prints concise progress snapshots. Progress output contains counts only and does not
-print payload bodies, credentials, headers, cookies, tokens, or response bodies.
+`--progress` prints concise progress snapshots. Progress output avoids raw payloads and
+secrets.
 
-## Reporting
+## Reports and Benchmarks
 
-Reports include `stability_summary` with fields such as:
-
-- `scan_status`
-- `max_requests`
-- `max_requests_per_endpoint`
-- `max_duration_seconds`
-- `rate_limit_rps`
-- `min_request_delay_ms`
-- `retry_enabled`
-- `max_retries`
-- `total_retries_attempted`
-- `requests_skipped_due_to_budget`
-- `requests_skipped_due_to_endpoint_budget`
-- `requests_skipped_due_to_timeout`
-- `requests_skipped_due_to_dry_run`
-- `requests_skipped_due_to_authorization`
-- `duration_seconds`
-- `partial_results`
-
-Benchmark job summaries include selected stability fields when the scan report contains them.
-
-## Config Example
-
-```yaml
-limits:
-  max_requests: 100
-  max_requests_per_endpoint: 10
-  max_duration_seconds: 60
-  max_graphql_requests: 50
-  max_rest_requests: 50
-
-stability:
-  rate_limit_rps: 2.0
-  min_request_delay_ms: 100
-  progress: true
-  retry:
-    enabled: true
-    max_retries: 2
-    retry_on_status_codes: [429, 500, 502, 503, 504]
-    backoff_initial_ms: 100
-    backoff_multiplier: 2.0
-    backoff_max_ms: 1000
-```
-
-## Safety Notes
-
-- Dry-run still prevents all HTTP execution.
-- Scope validation remains active.
-- Destructive method blocking remains active.
-- Mutation and attack execution still require explicit authorization.
-- Auth redaction remains active.
-- No external services are used for throttling or retry.
+Reports can include scan status, duration, request budget fields, skipped counts, retry
+counts, and partial-result status. Benchmark summaries can carry stability fields copied from
+scan reports.
 
 ## Limitations
 
 - No distributed scanning.
-- No async rewrite.
-- No adaptive throttling.
 - No persistent resume.
-- KeyboardInterrupt partial-report cancellation is not implemented in this milestone.
-
+- No advanced adaptive throttling.
+- Graceful cancellation is limited to the current CLI scan handling where partial state is available.

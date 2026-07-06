@@ -1,72 +1,73 @@
-# YSLFuzz Evaluation
+# Evaluation
 
-YSLFuzz can compare an existing JSON scan report with a ground-truth lab file and export benchmark-friendly JSON and CSV artifacts. Evaluation is offline only: it reads existing files and does not run scans or contact targets.
+YSLFuzz can compare an existing JSON scan report with a JSON or YAML ground-truth file.
+Evaluation is useful for local labs and repeatable research review.
+
+## CLI
+
+```bash
+uv run yslfuzz evaluate \
+  --report reports/scan.json \
+  --ground-truth examples/evaluation/simple_users_ground_truth.json \
+  --output-dir reports/evaluation
+```
 
 ## Ground-Truth Format
 
-Ground truth can be JSON or YAML. Required top-level fields:
+A ground-truth file describes a lab target and expected vulnerabilities:
 
-- `lab_id`
-- `lab_name`
-- `lab_version`
-- `target_name`
-- `target_base_url`
-- `api_style`
-- `expected_vulnerabilities`
-- `expected_endpoints`
-
-Each expected vulnerability includes:
-
-- `ground_truth_id`
-- `endpoint_path`
-- `endpoint_method`
-- `attack_category`
-- `vulnerability_type`
-- `expected_severity`
-- `affected_parameter`
-- `affected_location`
-- `cwe`
-- `owasp_api_category`
-- `description`
-- `tags`
-
-See `examples/evaluation/simple_users_ground_truth.json` for a minimal mock-lab example.
-
-## Running Evaluation
-
-```bash
-yslfuzz evaluate \
-  --report yslfuzz_report.json \
-  --ground-truth examples/evaluation/simple_users_ground_truth.json \
-  --output-dir evaluation_results/
+```json
+{
+  "lab_id": "simple-users",
+  "lab_name": "Simple Users",
+  "lab_version": "1.0.0",
+  "target_name": "Simple Users API",
+  "target_base_url": "http://localhost:8000",
+  "api_style": "rest",
+  "expected_endpoints": ["/users"],
+  "expected_vulnerabilities": []
+}
 ```
 
-The command writes:
+Expected vulnerabilities include endpoint path, method, attack category, expected severity,
+affected parameter metadata, and description fields.
 
-- `evaluation.json`
-- `findings.csv`
-- `endpoints.csv`
-- `matches.csv`
-- `metrics.csv`
+## Matching Behavior
 
-## Matching
+The evaluator matches report findings against expected vulnerabilities using endpoint,
+method, category, and related metadata where available. It produces:
 
-Matching is deterministic and conservative. A finding matches ground truth when endpoint path, endpoint method, and attack category match. If both the finding and ground-truth item provide an affected parameter, the parameter must also match.
-
-No fuzzy matching, machine learning, timestamps, request IDs, or response IDs are used for matching.
+- true positives;
+- false positives;
+- false negatives;
+- unmatched findings;
+- unmatched ground-truth entries.
 
 ## Metrics
 
-- `precision = TP / (TP + FP)`, or `0` if the denominator is `0`
-- `recall = TP / (TP + FN)`, or `0` if the denominator is `0`
-- `f1_score = 2 * precision * recall / (precision + recall)`, or `0` if the denominator is `0`
-- `endpoint_coverage` is copied from the YSLFuzz report metrics when available.
-- `payload_validity_rate` is copied from the YSLFuzz report metrics when available.
+Evaluation metrics include:
+
+- total expected vulnerabilities;
+- total findings;
+- true positives;
+- false positives;
+- false negatives;
+- precision;
+- recall;
+- F1 score;
+- endpoint coverage;
+- payload validity rate;
+- total requests;
+- total generated and executed payloads;
+- findings by severity and category.
+
+## Exports
+
+The exporter writes JSON and CSV artifacts for findings, endpoints, matches, and metrics.
+These exports can be used externally for thesis analysis or comparison workflows.
 
 ## Limitations
 
-- Evaluation does not run third-party scanners.
-- Evaluation does not deploy or manage vulnerable labs.
-- GraphQL-specific benchmark matching is not implemented in this MVP.
-- Matching is intentionally field-based and conservative; manual review is still required for thesis conclusions.
-- Outputs are redacted with the same report redaction helper used by JSON reporting.
+- Evaluation consumes an existing YSLFuzz report; it does not run scans by itself.
+- Matching is deterministic but conservative.
+- Third-party baseline comparison is not a core YSLFuzz feature.

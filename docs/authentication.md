@@ -1,94 +1,110 @@
-# Authentication Profiles MVP
+# Authentication
 
-YSLFuzz supports safe runtime authentication for REST/OpenAPI scans. Authentication values must come from environment variables. Do not pass raw tokens, cookies, API keys, passwords, or JWTs on the command line or in repository files.
+YSLFuzz authentication profiles reference environment variables. Secret values are read at
+execution time and redacted in reports and serialized models.
 
-## Supported Modes
+Only run authenticated scans against targets you are authorized to test.
 
-- Bearer token header: `Authorization: Bearer <value>`
-- API key header: default header `X-API-Key`, or a user-provided header name
-- Cookie header: default cookie name `session`, or a user-provided cookie name
-- Custom header: one or more `HEADER_NAME:ENV_VAR` mappings
-
-Query-string credentials, OAuth login flows, browser login, token refresh, and secret managers are not part of this MVP. Configuration profiles may reference authentication environment variable names, but never raw credential values.
-
-## CLI Usage
+## Bearer Token
 
 ```bash
-export YSLFUZZ_TOKEN="<placeholder-token>"
-yslfuzz scan \
+export YSLFUZZ_TOKEN="set-this-in-your-shell"
+
+uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --output report.json \
-  --auth-bearer-env YSLFUZZ_TOKEN
+  --auth-bearer-env YSLFUZZ_TOKEN \
+  --dry-run \
+  --output reports/auth_bearer_dry_run.json
 ```
 
+Config:
+
+```yaml
+auth:
+  bearer_env: YSLFUZZ_TOKEN
+```
+
+## API Key Header
+
 ```bash
-export YSLFUZZ_API_KEY="<placeholder-api-key>"
-yslfuzz scan \
+export YSLFUZZ_API_KEY="set-this-in-your-shell"
+
+uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --output report.json \
   --auth-api-key-env YSLFUZZ_API_KEY \
-  --auth-api-key-header X-API-Key
+  --auth-api-key-header X-API-Key \
+  --dry-run \
+  --output reports/auth_api_key_dry_run.json
 ```
 
+Config:
+
+```yaml
+auth:
+  api_key_env: YSLFUZZ_API_KEY
+  api_key_header: X-API-Key
+```
+
+## Cookie
+
 ```bash
-export YSLFUZZ_SESSION="<placeholder-session>"
-yslfuzz scan \
+export YSLFUZZ_SESSION="set-this-in-your-shell"
+
+uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --output report.json \
   --auth-cookie-env YSLFUZZ_SESSION \
-  --auth-cookie-name session
+  --auth-cookie-name session \
+  --dry-run \
+  --output reports/auth_cookie_dry_run.json
 ```
+
+Config:
+
+```yaml
+auth:
+  cookie_env: YSLFUZZ_SESSION
+  cookie_name: session
+```
+
+## Custom Header
 
 ```bash
-export YSLFUZZ_CUSTOM_AUTH="<placeholder-custom-auth>"
-yslfuzz scan \
+export YSLFUZZ_CUSTOM_AUTH="set-this-in-your-shell"
+
+uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --output report.json \
-  --auth-header X-Custom-Auth:YSLFUZZ_CUSTOM_AUTH
+  --auth-header X-Custom-Auth:YSLFUZZ_CUSTOM_AUTH \
+  --dry-run \
+  --output reports/auth_custom_header_dry_run.json
 ```
 
-Only one authentication mode may be configured per scan. Multiple custom header mappings are allowed as one custom-header mode.
+Config:
 
-## Safety Guarantees
-
-Authentication values are read from environment variables at runtime and are not persisted in reports, benchmark metadata, lab manifests, test fixtures, or CLI output. Request records store redacted auth markers such as `[REDACTED]`; the HTTP executor receives raw values only for the immediate outbound request.
-
-Reports may include safe metadata:
-
-- `authentication_enabled`
-- `authentication_types`
-- `auth_sources`
-- `auth_redaction_applied`
-
-Reports do not include raw environment variable values. Environment variable names are also omitted from report auth metadata.
+```yaml
+auth:
+  custom_headers:
+    - X-Custom-Auth:YSLFUZZ_CUSTOM_AUTH
+```
 
 ## Redaction
 
-Redaction covers common sensitive names including `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`, `Api-Key`, `API-Key`, `X-Auth-Token`, `X-CSRF-Token`, `access_token`, `refresh_token`, `id_token`, `token`, `jwt`, `session`, `secret`, `password`, `passwd`, and `credential`.
+YSLFuzz redacts authentication headers, cookies, and sensitive payload values in reports.
+Configuration files should contain env var names only. Do not commit secret values.
 
-Redaction is applied to request summaries, response summaries, evidence, findings, JSON reports, Markdown reports, benchmark artifacts that contain scan output, and display helpers for resolved auth material.
+## Dry-Run Behavior
 
-## GraphQL Execution
+Dry-run can validate that an auth profile resolves without sending HTTP requests. The auth
+value is still redacted in report metadata.
 
-Authentication profiles also apply to GraphQL valid payload execution. Bearer, API key, cookie, and
-custom header modes are resolved from environment variables and injected into GraphQL POST requests
-using the same redaction behavior as REST requests.
+## Limitations
 
-Dry-run GraphQL scans may include redacted auth markers in planned request records, but execute zero
-HTTP requests.
-
-## Dry Run, Mutations, and Attacks
-
-Dry-run scans do not execute authenticated requests. They may still include safe report metadata indicating that authentication was configured.
-
-Authentication applies to valid requests, mutation requests, attack requests, and workflow requests only when those requests are otherwise allowed to execute. Authentication does not weaken scope validation, destructive method blocking, mutation execution opt-in, or attack execution opt-in.
-
-## Benchmark and Lab Metadata
-
-Benchmark jobs may reference authentication environment variable names with fields such as `auth_bearer_env`, `auth_api_key_env`, `auth_cookie_env`, and `auth_headers`. Benchmark configs must store names only, never values.
-
-Lab manifests may document that authentication is required and list required auth types. Lab packs must not include real credentials, tokens, cookies, API keys, or sample secrets.
+- One auth mode per scan profile.
+- No OAuth login flow.
+- No token refresh.
+- No browser automation.
+- No query-string credential mode.
+- No credential guessing or token mutation.

@@ -1,15 +1,21 @@
-# YSLFuzz Lab Packs
+# Lab Examples
 
-Lab packs are local metadata bundles for reproducible YSLFuzz evaluation and benchmarking. A lab pack describes a target, its OpenAPI schema, expected vulnerabilities, safe benchmark defaults, setup notes, and limitations.
+This directory contains local lab pack manifests.
 
-Available MVP lab packs:
+## Commands
 
-- `simple-users`: deterministic mock REST/OpenAPI lab metadata for local dry-run evaluation and benchmark smoke tests.
+```bash
+uv run yslfuzz labs list
+uv run yslfuzz labs show --lab simple-users
+```
 
-Future lab pack candidates:
+## simple-users
 
-- OWASP crAPI
-- OWASP Juice Shop
-- Damn Vulnerable REST API or similar vulnerable REST API labs
+`simple-users` demonstrates the lab pack structure:
 
-These future candidates are documentation-only for now. This repository does not bundle third-party vulnerable applications, Docker orchestration, automatic downloads, credentials, or external executable targets. Run vulnerable labs only in authorized local environments.
+- `lab.json`: manifest.
+- OpenAPI schema reference.
+- ground-truth reference.
+- benchmark config reference.
+
+Lab packs are metadata and local fixtures. They do not start services or include credentials.

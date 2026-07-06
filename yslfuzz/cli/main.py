@@ -111,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     scan_parser = subparsers.add_parser(
         "scan",
-        help="Run the REST/OpenAPI MVP scan pipeline",
-        description="Run the REST/OpenAPI MVP scan pipeline",
+        help="Run a REST/OpenAPI or GraphQL scan",
+        description="Run a REST/OpenAPI or GraphQL scan",
     )
     scan_parser.add_argument("--config", default=None, help="JSON/YAML scan configuration file")
     schema_group = scan_parser.add_mutually_exclusive_group()

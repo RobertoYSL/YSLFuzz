@@ -1,245 +1,163 @@
-# Configuration Profiles MVP
+# Configuration
 
-YSLFuzz scan configuration profiles let a scan be defined in a local JSON or YAML file and executed with:
+YSLFuzz scan profiles are validated JSON or YAML files loaded with `--config`.
+CLI flags override matching configuration values when supplied.
 
-```bash
-yslfuzz scan --config examples/configs/simple_users_dry_run.json
+## Top-Level Sections
+
+- `target`: required schema input, API style, and base URL.
+- `auth`: optional environment-variable authentication references.
+- `payloads`: valid, boundary, invalid, mutated, attack, and GraphQL payload settings.
+- `graphql`: GraphQL endpoint, operation generation, execution, and analysis settings.
+- `execution`: dry-run, timeout, request limit, destructive guard, and execution gates.
+- `analysis`: detector controls.
+- `reporting`: report path and output format.
+- `limits`: scan-level request, payload, duration, REST, and GraphQL budgets.
+- `stability`: rate limiting, retry/backoff, and progress settings.
+- `safety`: safety controls that remain enabled by default.
+- `metadata`: user-visible scan notes and tags.
+
+## Supported Formats
+
+JSON and YAML are supported. Paths are resolved by the loader and CLI relative to the command
+context or the profile path where applicable.
+
+## REST Example
+
+```yaml
+target:
+  api_style: rest
+  openapi_path: examples/openapi/simple_users_api.yaml
+  base_url: http://localhost:8000
+
+payloads:
+  include_valid_payloads: true
+  include_boundary_payloads: true
+  include_invalid_payloads: true
+  include_attack_payloads: false
+
+execution:
+  dry_run: true
+  timeout: 5
+  max_requests: 25
+  allow_destructive: false
+
+reporting:
+  output: reports/rest_config_scan.json
 ```
 
-JSON is supported. YAML is also supported because YSLFuzz already depends on PyYAML.
+## GraphQL Example
 
-## Schema
+```yaml
+target:
+  api_style: graphql
+  graphql_schema_path: examples/graphql/simple_users_schema.graphql
+  base_url: http://localhost:8000
 
-Top-level sections:
+graphql:
+  endpoint_path: /graphql
+  include_queries: true
+  include_mutations: true
+  max_selection_depth: 2
+  max_fields_per_selection: 5
+  max_requests: 20
+  enable_analysis: true
+  include_introspection_probe: false
 
-- `target`: `openapi_path`, `base_url`, optional `api_style`, `target_id`, `target_name`
-- `auth`: environment-variable references for bearer, API key header, cookie, or custom headers
-- `payloads`: payload generation modes and limits
-- `graphql`: GraphQL endpoint, payload-generation limits, and GraphQL request limits
-- `execution`: dry-run, timeout, request limit, destructive-method and execution opt-ins
-- `analysis`: disabled detectors and minimum confidence
-- `reporting`: output path and output format
-- `limits`: optional request, endpoint, and payload budgets
-- `stability`: rate limiting, retry/backoff, and progress settings
-- `safety`: authorization-gate and redaction controls
-- `metadata`: scan name, notes, and tags
+execution:
+  dry_run: true
 
-Configuration profiles support REST/OpenAPI scans and local GraphQL schema scans. GraphQL settings
-cover discovery, valid payload generation, execution, safe non-valid payload generation, inert marker
-attack payload generation, and conservative GraphQL analysis.
-
-## Safe Defaults
-
-When a config file is used:
-
-- `dry_run = true`
-- `allow_destructive = false`
-- `execute_attacks = false`
-- `execute_mutations = false`
-- attack, boundary, invalid, and mutated payload modes are disabled unless explicitly enabled
-- `mutate_sensitive_fields = false`
-- `redact_secrets = true`
-- auth entries are environment variable names only
-- GraphQL endpoint defaults to `/graphql`
-- GraphQL config execution remains governed by `execution.dry_run`
-
-Existing CLI behavior is preserved when `--config` is not used.
-
-## Path Resolution
-
-Relative `target.openapi_path` and `reporting.output` paths are resolved relative to the config file directory.
-
-For example, in `examples/configs/simple_users_dry_run.json`:
-
-```json
-{
-  "target": {
-    "openapi_path": "../openapi/simple_users_api.yaml"
-  },
-  "reporting": {
-    "output": "simple_users_dry_run_report.json"
-  }
-}
+reporting:
+  output: reports/graphql_config_scan.json
 ```
 
-The OpenAPI path resolves under `examples/openapi/`, while the report path resolves under `examples/configs/`.
+## Authentication References
 
-## CLI Overrides
+Configuration stores environment variable names, not secret values:
 
-CLI flags override config values when explicitly provided. Supported overrides include target paths, output path, request limits, timeout, dry-run, payload mode flags, execution flags, auth flags, attack categories, mutation limits, and detector flags.
-
-Example:
-
-```bash
-yslfuzz scan \
-  --config examples/configs/simple_users_dry_run.json \
-  --output out/report.json \
-  --dry-run
+```yaml
+auth:
+  bearer_env: YSLFUZZ_TOKEN
 ```
 
-`--dry-run` only forces dry-run on. There is no CLI flag in this MVP to force a config dry-run value to false.
+Only one auth mode is supported per scan profile. See [Authentication](authentication.md).
 
-## Authentication
+## Payload Settings
 
-Config files may reference auth environment variable names:
+Important payload fields include:
 
-```json
-{
-  "auth": {
-    "bearer_env": "YSLFUZZ_TOKEN"
-  }
-}
+- `include_boundary_payloads`
+- `include_invalid_payloads`
+- `include_mutated_payloads`
+- `include_attack_payloads`
+- `enabled_attack_categories`
+- `max_mutations_per_payload`
+- `max_mutations_per_field`
+- `max_attack_requests_per_endpoint`
+- `allow_invalid_enum_values`
+- `mutate_sensitive_fields`
+- `allow_introspection_probe`
+
+Non-valid payload generation is disabled by default.
+
+## Execution Gates
+
+Mutation payload execution requires:
+
+```yaml
+execution:
+  execute_mutations: true
+  i_understand_mutation_execution_is_authorized: true
 ```
 
-The resolver reads the environment value only at execution time. Config files must not contain raw tokens, cookies, API keys, passwords, JWTs, or query-string credentials.
+Attack payload execution requires:
 
-## Authorization Gates
-
-If a merged config enables attack execution, it must also set:
-
-```json
-{
-  "execution": {
-    "execute_attacks": true,
-    "i_understand_attack_execution_is_authorized": true
-  }
-}
+```yaml
+execution:
+  execute_attacks: true
+  i_understand_attack_execution_is_authorized: true
 ```
 
-If a merged config enables mutation execution, it must also set:
+Dry-run still prevents all HTTP execution.
 
-```json
-{
-  "execution": {
-    "execute_mutations": true,
-    "i_understand_mutation_execution_is_authorized": true
-  }
-}
+## Stability Settings
+
+```yaml
+limits:
+  max_requests: 100
+  max_requests_per_endpoint: 10
+  max_duration_seconds: 60
+  max_graphql_requests: 50
+  max_rest_requests: 50
+
+stability:
+  rate_limit_rps: 2.0
+  min_request_delay_ms: 100
+  retry:
+    enabled: true
+    max_retries: 2
+    retry_on_status_codes: [429, 500, 502, 503, 504]
+    backoff_initial_ms: 100
+    backoff_multiplier: 2.0
+    backoff_max_ms: 1000
+  progress: true
 ```
 
-The equivalent CLI acknowledgement flags can satisfy these gates after config loading and CLI override merging.
+Retries are disabled by default and bounded when enabled.
 
-Dry-run still prevents HTTP execution.
+## Output Format
 
-## GraphQL Configuration
+The supported scan output format in configuration is JSON:
 
-GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_path`.
-
-```json
-{
-  "target": {
-    "api_style": "GRAPHQL",
-    "graphql_schema_path": "examples/graphql/simple_users_schema.graphql",
-    "base_url": "http://localhost:8080"
-  },
-  "graphql": {
-    "endpoint_path": "/graphql",
-    "max_selection_depth": 2,
-    "max_fields_per_selection": 5,
-    "include_queries": true,
-    "include_mutations": true,
-    "max_requests": 20,
-    "enable_analysis": true,
-    "include_introspection_probe": false
-  },
-  "payloads": {
-    "include_boundary_payloads": true,
-    "include_invalid_payloads": true,
-    "include_mutated_payloads": false,
-    "include_attack_payloads": false,
-    "max_mutations_per_payload": 10,
-    "max_mutations_per_field": 3,
-    "allow_invalid_enum_values": false,
-    "mutate_sensitive_fields": false,
-    "allow_extra_input_fields": true,
-    "allow_missing_required_fields": true,
-    "enabled_attack_categories": [
-      "INPUT_VALIDATION",
-      "INFORMATION_DISCLOSURE",
-      "SQL_INJECTION",
-      "NOSQL_INJECTION",
-      "COMMAND_INJECTION",
-      "SSRF"
-    ]
-  },
-  "analysis": {
-    "enable_graphql_error_disclosure": true,
-    "enable_graphql_validation_bypass": true,
-    "enable_graphql_introspection_exposure": true,
-    "enable_graphql_reflection_detection": true,
-    "enable_graphql_mass_assignment_detection": true,
-    "enable_graphql_authorization_consistency": true,
-    "enable_graphql_injection_marker_detection": true,
-    "enable_graphql_ssrf_marker_detection": true
-  },
-  "execution": {
-    "dry_run": true,
-    "timeout": 5,
-    "max_requests": 50
-  },
-  "limits": {
-    "max_requests": 50,
-    "max_requests_per_endpoint": 10,
-    "max_duration_seconds": 60,
-    "max_graphql_requests": 25
-  },
-  "stability": {
-    "rate_limit_rps": 2.0,
-    "min_request_delay_ms": 100,
-    "progress": true,
-    "retry": {
-      "enabled": true,
-      "max_retries": 2,
-      "retry_on_status_codes": [429, 500, 502, 503, 504],
-      "backoff_initial_ms": 100,
-      "backoff_multiplier": 2.0,
-      "backoff_max_ms": 1000
-    }
-  },
-  "reporting": {
-    "output": "graphql_report.json"
-  }
-}
+```yaml
+reporting:
+  output: reports/scan.json
+  output_format: json
 ```
-
-`execution.dry_run` applies to GraphQL. When dry-run is true, YSLFuzz builds planned GraphQL request
-records and executes zero HTTP requests. If both `graphql.max_requests` and `execution.max_requests`
-are set, the stricter limit is used.
-
-## Stability Configuration
-
-`limits.max_requests` maps to `execution.max_requests` when `execution.max_requests` is omitted.
-`limits.max_requests_per_endpoint` caps planned requests per endpoint. `limits.max_duration_seconds`
-stops scheduling new requests after the configured duration and records partial report metadata.
-
-`stability.rate_limit_rps` and `stability.min_request_delay_ms` pace real HTTP execution. They do
-not cause dry-run sleeps. `stability.retry.enabled` must be true before retry settings take effect.
-Retries are bounded and disabled by default.
-
-## Reporting Metadata
-
-Reports include safe config metadata:
-
-- `config_file_used`
-- `config_profile_name`
-- `config_hash`
-- `config_loaded_at`
-- `config_enabled_modes`
-
-Reports do not include the full config file or raw secret values. The config hash is deterministic over normalized validated config content and excludes runtime timestamps and the config file path.
-
-## Benchmark Relation
-
-Benchmark configs remain separate from scan configuration profiles for this MVP. The benchmark harness keeps its existing job schema.
 
 ## Limitations
 
-- GraphQL active authorization probe execution is not implemented; analysis can consume explicitly paired records.
-- GraphQL analysis is conservative and does not confirm vulnerabilities.
-- GraphQL SQL, NoSQL, command and SSRF category support uses inert markers only.
-- KeyboardInterrupt partial-report cancellation is not implemented.
-- No config inheritance or profile composition.
-- No remote config URLs.
-- No secret manager integration.
-- No OAuth, token refresh, browser login, or query-string credentials.
-- JSON and YAML files are local only.
+- Configuration profiles support REST or GraphQL targets, not both in one scan.
+- Only one auth mode is supported per scan profile.
+- Config files must not contain secret values.
+- CLI support is the authoritative user interface for flags and overrides.
