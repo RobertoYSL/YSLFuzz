@@ -133,6 +133,11 @@ class PayloadsConfigSection(ConfigModel):
     disable_boundary_values: bool = False
     disable_null_mutations: bool = False
     mutate_sensitive_fields: bool = False
+    allow_extra_input_fields: bool = True
+    allow_missing_required_fields: bool = True
+    allow_introspection_probe: bool = False
+    allow_error_leakage_probe: bool = True
+    allow_reflection_probe: bool = True
     graphql_include_queries: bool = True
     graphql_include_mutations: bool = True
     graphql_include_subscriptions: bool = False
@@ -300,6 +305,9 @@ class ScanConfig(ConfigModel):
             "include_invalid_payloads": self.payloads.include_invalid_payloads,
             "include_mutated_payloads": self.payloads.include_mutated_payloads,
             "include_attack_payloads": self.payloads.include_attack_payloads,
+            "allow_extra_input_fields": self.payloads.allow_extra_input_fields,
+            "allow_missing_required_fields": self.payloads.allow_missing_required_fields,
+            "allow_introspection_probe": self.payloads.allow_introspection_probe,
             "graphql_include_queries": self.payloads.graphql_include_queries,
             "graphql_include_mutations": self.payloads.graphql_include_mutations,
             "graphql_include_subscriptions": self.payloads.graphql_include_subscriptions,

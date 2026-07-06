@@ -51,6 +51,55 @@ uv run yslfuzz scan \
   --output graphql_report.json
 ```
 
+Generate boundary payloads in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-boundary-payloads \
+  --dry-run \
+  --output graphql_boundary_report.json
+```
+
+Generate invalid payloads in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-invalid-payloads \
+  --dry-run \
+  --output graphql_invalid_report.json
+```
+
+Generate inert attack-classified probes in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --dry-run \
+  --output graphql_attack_generation_report.json
+```
+
+Execute mutated GraphQL payloads only against an authorized local or mock endpoint:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-mutated-payloads \
+  --execute-mutations \
+  --i-understand-mutation-execution-is-authorized \
+  --output graphql_mutation_exec_report.json
+```
+
+Attack-classified GraphQL probes require `--execute-attacks` and
+`--i-understand-this-is-authorized`. They use inert markers only and should be used only against
+authorized local or mock endpoints.
+
 Example generated payload body:
 
 ```json

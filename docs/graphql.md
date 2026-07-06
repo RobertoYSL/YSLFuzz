@@ -1,7 +1,7 @@
 # GraphQL Discovery, Payload Generation, and Execution
 
-YSLFuzz supports local GraphQL discovery, deterministic valid GraphQL payload generation, and safe
-HTTP execution of valid GraphQL operation payloads.
+YSLFuzz supports local GraphQL discovery, deterministic valid payload generation, valid payload
+execution, and safe GraphQL boundary, invalid, mutated, and attack-classified payload generation.
 
 ## Supported Inputs
 
@@ -80,6 +80,36 @@ Selection sets are deterministic and bounded:
 
 Default limits are `max_selection_depth=2` and `max_fields_per_selection=5`.
 
+## Boundary, Invalid, Mutated, and Attack Payloads
+
+GraphQL non-valid payload generation is disabled by default. It is enabled only with the existing
+payload flags:
+
+- `--include-boundary-payloads`
+- `--include-invalid-payloads`
+- `--include-mutated-payloads`
+- `--include-attack-payloads`
+
+Boundary payloads mutate variables with bounded values such as empty strings, whitespace strings,
+synthetic ID markers, `0`, `-1`, flipped booleans, alternate enum values, and bounded list sizes.
+
+Invalid payloads create schema-invalid but safe inputs such as null for non-null variables, wrong
+scalar type when type-confusion is enabled, invalid enum values only when explicitly allowed, extra
+input object fields, and missing required input object fields.
+
+Mutated payloads are safe semantic variations such as alternate scalar values, alternate enum
+values, and bounded variable variation. They are not vulnerability probes by themselves.
+
+Attack-classified payloads use inert markers only:
+
+- `INPUT_VALIDATION`: safe invalid variable values.
+- `INFORMATION_DISCLOSURE`: safe schema validation error probes.
+- `XSS`: inert reflection marker `yslfuzz_graphql_reflection_marker`; no executable JavaScript.
+- `MASS_ASSIGNMENT`: safe extra input field `yslfuzz_extra_field`.
+- `GRAPHQL_INTROSPECTION_ABUSE`: minimal `__schema` query only when introspection probe generation is explicitly enabled.
+
+No auth bypass payloads are generated in this milestone. No credentials are changed or removed.
+
 ## Execution
 
 GraphQL execution uses a POST request to the configured GraphQL endpoint path. The default endpoint
@@ -94,7 +124,13 @@ The request body contains `query`, `variables`, and `operationName` when present
 profiles are applied through the same auth resolver and injector used by REST execution.
 
 Dry-run mode builds planned GraphQL request records but executes zero HTTP requests. Non-dry-run
-mode executes only valid GraphQL payloads through the shared `HttpExecutor`.
+mode executes valid GraphQL payloads through the shared `HttpExecutor`.
+
+Boundary, invalid and mutated GraphQL payloads execute only when `--execute-mutations` is set with
+`--i-understand-mutation-execution-is-authorized`. Attack-classified GraphQL payloads execute only
+when `--execute-attacks` is set with `--i-understand-this-is-authorized`. These gates are separate:
+`--execute-mutations` does not imply `--execute-attacks`, and `--execute-attacks` does not imply
+`--execute-mutations`.
 
 GraphQL HTTP 200 responses with an `errors` array are captured as response metadata:
 
@@ -138,6 +174,63 @@ Useful optional flags:
 --graphql-max-operations 10
 ```
 
+Generate boundary payloads in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-boundary-payloads \
+  --dry-run \
+  --output graphql_boundary_report.json
+```
+
+Generate invalid payloads in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-invalid-payloads \
+  --dry-run \
+  --output graphql_invalid_report.json
+```
+
+Generate inert attack-classified probes in dry-run:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --dry-run \
+  --output graphql_attack_generation_report.json
+```
+
+Execute GraphQL mutated payloads only with explicit authorization:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-mutated-payloads \
+  --execute-mutations \
+  --i-understand-mutation-execution-is-authorized \
+  --output graphql_mutation_exec_report.json
+```
+
+Execute GraphQL attack-classified probes only with explicit authorization:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --include-attack-payloads \
+  --execute-attacks \
+  --i-understand-this-is-authorized \
+  --output graphql_attack_exec_report.json
+```
+
 `--openapi` and `--graphql-schema` remain mutually exclusive.
 
 ## Configuration
@@ -161,8 +254,20 @@ Configuration profiles can select GraphQL discovery, payload generation, and exe
   },
   "execution": {
     "dry_run": true,
+    "execute_mutations": false,
+    "execute_attacks": false,
     "timeout": 5,
     "max_requests": 50
+  },
+  "payloads": {
+    "include_boundary_payloads": true,
+    "include_invalid_payloads": true,
+    "include_mutated_payloads": false,
+    "include_attack_payloads": false,
+    "max_mutations_per_payload": 10,
+    "max_mutations_per_field": 3,
+    "allow_invalid_enum_values": false,
+    "mutate_sensitive_fields": false
   },
   "reporting": {
     "output": "graphql_report.json"
@@ -172,6 +277,10 @@ Configuration profiles can select GraphQL discovery, payload generation, and exe
 
 `execution.dry_run` always prevents HTTP execution. If both `graphql.max_requests` and
 `execution.max_requests` are set, the stricter request limit is used.
+
+Config-driven mutation execution still requires
+`i_understand_mutation_execution_is_authorized=true`. Config-driven attack execution still requires
+`i_understand_attack_execution_is_authorized=true`.
 
 ## Authentication
 
@@ -199,6 +308,11 @@ JSON reports include safe GraphQL metadata:
 - GraphQL responses received;
 - transport error count;
 - GraphQL application error count from response `errors` arrays;
+- boundary, invalid, mutated, and attack payload counts;
+- mutation operator counts;
+- attack categories generated;
+- inert markers used;
+- skipped dry-run and skipped not-authorized counts;
 - `execution_enabled`;
 - `dry_run`.
 
@@ -206,8 +320,8 @@ Reports do not include raw authentication material.
 
 ## Current Limitations
 
-- No GraphQL invalid, boundary, mutation or attack payloads until Milestone 22.
 - No GraphQL-specific vulnerability analysis until Milestone 23.
+- No vulnerability confirmation or overclaiming based on generated probes.
 - No batching.
 - No subscriptions or WebSocket execution.
 - No live introspection over HTTP.
@@ -215,4 +329,5 @@ Reports do not include raw authentication material.
 - No multipart upload.
 - No GET-based GraphQL execution.
 - No DoS-style deep query generation, aliasing abuse or fragment expansion.
+- No SQL injection, NoSQL injection, command execution, SSRF, cloud metadata, internal IP, executable JavaScript, credential stuffing, or auth bypass probes.
 - The built-in SDL parser intentionally supports a conservative subset.

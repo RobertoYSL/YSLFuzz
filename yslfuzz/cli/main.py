@@ -78,6 +78,9 @@ from yslfuzz.models.schema import Endpoint
 from yslfuzz.payloads import (
     AttackGenerationConfig,
     AttackPayloadGenerator,
+    GraphQLAttackPayloadGenerator,
+    GraphQLMutationConfig,
+    GraphQLMutationEngine,
     GraphQLPayloadConfig,
     GraphQLPayloadGenerator,
     MutationConfig,
@@ -678,13 +681,36 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         raise ValueError("--max-requests must be greater than or equal to 0")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than 0")
+    if args.max_mutations_per_payload < 0:
+        raise ValueError("--max-mutations-per-payload must be greater than or equal to 0")
+    if args.max_mutations_per_field < 0:
+        raise ValueError("--max-mutations-per-field must be greater than or equal to 0")
+    if args.max_attack_requests_per_endpoint < 0:
+        raise ValueError("--max-attack-requests-per-endpoint must be greater than or equal to 0")
+    if args.execute_mutations and not args.i_understand_mutation_execution_is_authorized:
+        raise ValueError(
+            "--execute-mutations requires --i-understand-mutation-execution-is-authorized"
+        )
+    if args.execute_attacks and not args.i_understand_this_is_authorized:
+        raise ValueError("--execute-attacks requires --i-understand-this-is-authorized")
+    attack_categories = _attack_categories_from_args(args.attack_category)
     graphql_payload_config = _graphql_payload_config_from_args(args)
     graphql_execution_config = _graphql_execution_config_from_args(args)
+    graphql_mutation_config = _graphql_mutation_config_from_args(args, attack_categories)
 
     loader = GraphQLSchemaLoader()
     graphql_schema = loader.load(graphql_schema_path)
     api_schema = GraphQLToApiSchemaMapper().map(graphql_schema, base_url=args.base_url)
-    payloads = GraphQLPayloadGenerator(graphql_payload_config).generate(graphql_schema)
+    valid_payloads = GraphQLPayloadGenerator(graphql_payload_config).generate(graphql_schema)
+    mutation_payloads = GraphQLMutationEngine(graphql_mutation_config).mutate(
+        graphql_schema,
+        valid_payloads,
+    )
+    attack_payloads = GraphQLAttackPayloadGenerator(graphql_mutation_config).generate(
+        graphql_schema,
+        valid_payloads,
+    )
+    payloads = [*valid_payloads, *mutation_payloads, *attack_payloads]
     _align_graphql_payload_endpoint_ids(payloads, api_schema.endpoints)
     target = _target_from_args(
         args.base_url,
@@ -707,7 +733,14 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         graphql_execution_config,
         http_executor=HttpExecutor(),
     ).execute(
-        payloads,
+        _graphql_payloads_selected_for_execution(
+            valid_payloads=valid_payloads,
+            mutation_payloads=mutation_payloads,
+            attack_payloads=attack_payloads,
+            dry_run=bool(args.dry_run),
+            execute_mutations=bool(args.execute_mutations),
+            execute_attacks=bool(args.execute_attacks),
+        ),
         target=target,
         scan_run_id=scan.scan_run_id,
         auth_material=auth_material,
@@ -716,6 +749,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         graphql_schema,
         graphql_execution_config,
         execution_bundle,
+        payloads,
     )
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
@@ -747,22 +781,35 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
                 payloads,
                 graphql_payload_config,
             ),
+            "graphql_mutation_attack_generation": _graphql_mutation_attack_generation_summary(
+                payloads,
+                graphql_mutation_config,
+                dry_run=bool(args.dry_run),
+                mutation_execution_enabled=bool(args.execute_mutations and not args.dry_run),
+                attack_execution_enabled=bool(args.execute_attacks and not args.dry_run),
+                executed_request_payload_ids={
+                    request.payload_id
+                    for request in execution_bundle.request_records
+                    for result in execution_bundle.execution_results
+                    if result.request_id == request.request_id
+                },
+            ),
             "graphql_execution": graphql_execution_summary,
             "scan_status_message": (
                 "GraphQL discovery, valid payload generation, and execution planning succeeded."
             ),
-            "include_attack_payloads": False,
-            "execute_attacks": False,
-            "attack_execution_enabled": False,
-            "enabled_attack_categories": [],
+            "include_attack_payloads": bool(args.include_attack_payloads),
+            "execute_attacks": bool(args.execute_attacks and not args.dry_run),
+            "attack_execution_enabled": bool(args.execute_attacks and not args.dry_run),
+            "enabled_attack_categories": [category.value for category in attack_categories],
             "total_detector_results": 0,
             "total_raw_findings": 0,
             "total_deduplicated_findings": 0,
             "deduplicate_findings": not bool(args.no_deduplicate_findings),
             "analysis_config": _analysis_config_from_args(args).summary(),
             "analysis_detectors": [],
-            "mutation_execution_enabled": False,
-            "mutation_config": _mutation_config_from_args(args).model_dump(mode="json"),
+            "mutation_execution_enabled": bool(args.execute_mutations and not args.dry_run),
+            "mutation_config": graphql_mutation_config.model_dump(mode="json"),
             "random_seed": graphql_payload_config.seed,
             "max_mutations_per_payload": args.max_mutations_per_payload,
             "max_mutations_per_field": args.max_mutations_per_field,
@@ -1214,6 +1261,11 @@ def _args_from_scan_config(
     effective.disable_type_confusion = config.payloads.disable_type_confusion
     effective.disable_boundary_values = config.payloads.disable_boundary_values
     effective.disable_null_mutations = config.payloads.disable_null_mutations
+    effective.allow_extra_input_fields = config.payloads.allow_extra_input_fields
+    effective.allow_missing_required_fields = config.payloads.allow_missing_required_fields
+    effective.allow_introspection_probe = config.payloads.allow_introspection_probe
+    effective.allow_error_leakage_probe = config.payloads.allow_error_leakage_probe
+    effective.allow_reflection_probe = config.payloads.allow_reflection_probe
     effective.i_understand_this_is_authorized = (
         config.execution.i_understand_attack_execution_is_authorized
     )
@@ -1421,6 +1473,53 @@ def _effective_graphql_request_limit(
     return min(limits)
 
 
+def _graphql_mutation_config_from_args(
+    args: argparse.Namespace,
+    attack_categories: Sequence[AttackCategory],
+) -> GraphQLMutationConfig:
+    enabled_attack_categories = list(attack_categories) if attack_categories else None
+    return GraphQLMutationConfig(
+        include_boundary_payloads=bool(args.include_boundary_payloads),
+        include_invalid_payloads=bool(args.include_invalid_payloads),
+        include_mutated_payloads=bool(args.include_mutated_payloads),
+        include_attack_payloads=bool(args.include_attack_payloads),
+        enabled_attack_categories=enabled_attack_categories,
+        max_mutations_per_payload=args.max_mutations_per_payload,
+        max_mutations_per_variable=args.max_mutations_per_field,
+        max_attack_payloads_per_operation=args.max_attack_requests_per_endpoint,
+        include_sensitive_fields=bool(args.mutate_sensitive_fields),
+        allow_invalid_enum_values=bool(args.allow_invalid_enum_values),
+        allow_type_confusion=not bool(args.disable_type_confusion),
+        allow_null_mutations=not bool(args.disable_null_mutations),
+        allow_extra_input_fields=bool(getattr(args, "allow_extra_input_fields", True)),
+        allow_missing_required_fields=bool(getattr(args, "allow_missing_required_fields", True)),
+        allow_introspection_probe=bool(getattr(args, "allow_introspection_probe", False)),
+        allow_error_leakage_probe=bool(getattr(args, "allow_error_leakage_probe", True)),
+        allow_reflection_probe=bool(getattr(args, "allow_reflection_probe", True)),
+        deterministic=True,
+        random_seed=0,
+    )
+
+
+def _graphql_payloads_selected_for_execution(
+    *,
+    valid_payloads: Sequence[PayloadCandidate],
+    mutation_payloads: Sequence[PayloadCandidate],
+    attack_payloads: Sequence[PayloadCandidate],
+    dry_run: bool,
+    execute_mutations: bool,
+    execute_attacks: bool,
+) -> list[PayloadCandidate]:
+    if dry_run:
+        return [*valid_payloads, *mutation_payloads, *attack_payloads]
+    selected = list(valid_payloads)
+    if execute_mutations:
+        selected.extend(mutation_payloads)
+    if execute_attacks:
+        selected.extend(attack_payloads)
+    return selected
+
+
 def _graphql_payload_generation_summary(
     schema: object,
     payloads: Sequence[PayloadCandidate],
@@ -1458,16 +1557,92 @@ def _graphql_payload_generation_summary(
     }
 
 
+def _graphql_mutation_attack_generation_summary(
+    payloads: Sequence[PayloadCandidate],
+    config: GraphQLMutationConfig,
+    *,
+    dry_run: bool,
+    mutation_execution_enabled: bool,
+    attack_execution_enabled: bool,
+    executed_request_payload_ids: set[str | None],
+) -> dict[str, Any]:
+    generated_by_kind = _payload_counts_by_kind(payloads)
+    executed_by_kind = _payload_counts_by_kind(
+        [payload for payload in payloads if payload.payload_id in executed_request_payload_ids]
+    )
+    non_valid_generated = (
+        generated_by_kind.get(PayloadKind.BOUNDARY.value, 0)
+        + generated_by_kind.get(PayloadKind.INVALID.value, 0)
+        + generated_by_kind.get(PayloadKind.MUTATED.value, 0)
+        + generated_by_kind.get(PayloadKind.ATTACK.value, 0)
+    )
+    non_valid_executed = (
+        executed_by_kind.get(PayloadKind.BOUNDARY.value, 0)
+        + executed_by_kind.get(PayloadKind.INVALID.value, 0)
+        + executed_by_kind.get(PayloadKind.MUTATED.value, 0)
+        + executed_by_kind.get(PayloadKind.ATTACK.value, 0)
+    )
+    operator_counts: dict[str, int] = {}
+    inert_markers: set[str] = set()
+    attack_categories: set[str] = set()
+    introspection_probe_generated = False
+    for payload in payloads:
+        operator = payload.metadata.get("graphql_mutation_operator")
+        if isinstance(operator, str):
+            operator_counts[operator] = operator_counts.get(operator, 0) + 1
+            if operator == "attack_introspection_probe":
+                introspection_probe_generated = True
+        marker = payload.metadata.get("inert_marker")
+        if isinstance(marker, str):
+            inert_markers.add(marker)
+        if payload.attack_category is not None:
+            attack_categories.add(payload.attack_category.value)
+    skipped_dry_run = non_valid_generated if dry_run else 0
+    skipped_not_authorized = 0 if dry_run else max(0, non_valid_generated - non_valid_executed)
+    return {
+        "graphql_valid_payloads_generated": generated_by_kind.get(PayloadKind.VALID.value, 0),
+        "graphql_boundary_payloads_generated": generated_by_kind.get(PayloadKind.BOUNDARY.value, 0),
+        "graphql_invalid_payloads_generated": generated_by_kind.get(PayloadKind.INVALID.value, 0),
+        "graphql_mutated_payloads_generated": generated_by_kind.get(PayloadKind.MUTATED.value, 0),
+        "graphql_attack_payloads_generated": generated_by_kind.get(PayloadKind.ATTACK.value, 0),
+        "graphql_valid_payloads_executed": executed_by_kind.get(PayloadKind.VALID.value, 0),
+        "graphql_boundary_payloads_executed": executed_by_kind.get(PayloadKind.BOUNDARY.value, 0),
+        "graphql_invalid_payloads_executed": executed_by_kind.get(PayloadKind.INVALID.value, 0),
+        "graphql_mutated_payloads_executed": executed_by_kind.get(PayloadKind.MUTATED.value, 0),
+        "graphql_attack_payloads_executed": executed_by_kind.get(PayloadKind.ATTACK.value, 0),
+        "graphql_payloads_skipped_not_authorized": skipped_not_authorized,
+        "graphql_payloads_skipped_dry_run": skipped_dry_run,
+        "graphql_attack_categories_generated": sorted(attack_categories),
+        "graphql_mutation_operator_counts": {
+            key: operator_counts[key] for key in sorted(operator_counts)
+        },
+        "graphql_inert_markers_used": sorted(inert_markers),
+        "graphql_introspection_probe_generated": introspection_probe_generated,
+        "mutation_execution_enabled": mutation_execution_enabled,
+        "attack_execution_enabled": attack_execution_enabled,
+        "dry_run": dry_run,
+        "config": config.model_dump(mode="json"),
+    }
+
+
 def _graphql_execution_summary(
     schema: object,
     config: GraphQLExecutionConfig,
     bundle: object,
+    payloads: Sequence[PayloadCandidate],
 ) -> dict[str, Any]:
     schema_id = getattr(schema, "schema_id", None)
     planned = int(getattr(bundle, "planned_count", 0))
     executed = int(getattr(bundle, "executed_count", 0))
     skipped_dry_run = int(getattr(bundle, "skipped_dry_run_count", 0))
     responses = getattr(bundle, "response_records", [])
+    payload_by_id = {payload.payload_id: payload for payload in payloads}
+    executed_payloads = [
+        payload_by_id[request.payload_id]
+        for request in getattr(bundle, "request_records", [])
+        if request.payload_id in payload_by_id
+    ]
+    executed_by_kind = _payload_counts_by_kind(executed_payloads)
     return {
         "api_style": "graphql",
         "graphql_schema_id": schema_id,
@@ -1478,9 +1653,18 @@ def _graphql_execution_summary(
         "graphql_responses_received": len(responses),
         "graphql_errors_transport": int(getattr(bundle, "transport_error_count", 0)),
         "graphql_errors_application": int(getattr(bundle, "application_error_count", 0)),
+        "graphql_payloads_executed_by_kind": executed_by_kind,
         "execution_enabled": bool(config.execute_graphql and not config.dry_run),
         "dry_run": config.dry_run,
     }
+
+
+def _payload_counts_by_kind(payloads: Sequence[PayloadCandidate]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for payload in payloads:
+        kind = payload.payload_kind.value
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts
 
 
 def _align_graphql_payload_endpoint_ids(

@@ -5,6 +5,12 @@ from yslfuzz.payloads.value_factory import ValueFactory
 from yslfuzz.payloads.attack_generator import AttackGenerationConfig, AttackPayloadGenerator
 from yslfuzz.payloads.attack_templates import AttackTemplate
 from yslfuzz.payloads.graphql import (
+    GraphQLAttackPayloadGenerator,
+    GraphQLMutation,
+    GraphQLMutationConfig,
+    GraphQLMutationContext,
+    GraphQLMutationEngine,
+    GraphQLMutationOperator,
     GraphQLOperationBuilder,
     GraphQLOperationPayload,
     GraphQLPayloadConfig,
@@ -29,6 +35,12 @@ __all__ = [
     "AttackTarget",
     "AttackTargetSelector",
     "AttackTemplate",
+    "GraphQLAttackPayloadGenerator",
+    "GraphQLMutation",
+    "GraphQLMutationConfig",
+    "GraphQLMutationContext",
+    "GraphQLMutationEngine",
+    "GraphQLMutationOperator",
     "GraphQLOperationBuilder",
     "GraphQLOperationPayload",
     "GraphQLPayloadConfig",

@@ -139,6 +139,18 @@ GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_p
     "include_mutations": true,
     "max_requests": 20
   },
+  "payloads": {
+    "include_boundary_payloads": true,
+    "include_invalid_payloads": true,
+    "include_mutated_payloads": false,
+    "include_attack_payloads": false,
+    "max_mutations_per_payload": 10,
+    "max_mutations_per_field": 3,
+    "allow_invalid_enum_values": false,
+    "mutate_sensitive_fields": false,
+    "allow_extra_input_fields": true,
+    "allow_missing_required_fields": true
+  },
   "execution": {
     "dry_run": true,
     "timeout": 5,

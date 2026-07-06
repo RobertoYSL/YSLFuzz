@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 from yslfuzz.execution.errors import RequestBuildError
 from yslfuzz.execution.graphql.config import GraphQLExecutionConfig
 from yslfuzz.execution.redaction import redact_body_value, redact_mapping_values
-from yslfuzz.models.enums import HttpMethod, PayloadKind
+from yslfuzz.models.enums import HttpMethod
 from yslfuzz.models.execution import RequestRecord
 from yslfuzz.models.payload import PayloadCandidate
 
@@ -26,8 +26,6 @@ class GraphQLRequestBuilder:
         endpoint_id: str | None = None,
     ) -> RequestRecord:
         """Build a redacted GraphQL POST request record."""
-        if payload.payload_kind != PayloadKind.VALID:
-            raise RequestBuildError("GraphQL execution MVP only executes VALID payloads")
         body = self._graphql_body(payload)
         headers = dict(payload.headers)
         headers.setdefault("Content-Type", self.config.content_type)
