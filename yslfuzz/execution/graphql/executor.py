@@ -8,9 +8,10 @@ from yslfuzz.auth import AuthInjector
 from yslfuzz.execution.executor import HttpExecutor
 from yslfuzz.execution.graphql.config import GraphQLExecutionConfig
 from yslfuzz.execution.graphql.request_builder import GraphQLRequestBuilder
+from yslfuzz.execution.limits import ExecutionBudget
 from yslfuzz.execution.scope import ScopeValidator
 from yslfuzz.models.auth import ResolvedAuthMaterial
-from yslfuzz.models.enums import ExecutionStatus
+from yslfuzz.models.enums import ApiStyle, ExecutionStatus
 from yslfuzz.models.execution import ExecutionResult, RequestRecord, ResponseRecord
 from yslfuzz.models.payload import PayloadCandidate
 from yslfuzz.models.project import Target
@@ -40,12 +41,14 @@ class GraphQLExecutor:
         auth_injector: AuthInjector | None = None,
         scope_validator: ScopeValidator | None = None,
         request_builder: GraphQLRequestBuilder | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> None:
         self.config = config or GraphQLExecutionConfig()
         self.http_executor = http_executor or HttpExecutor()
         self.auth_injector = auth_injector or AuthInjector()
         self.scope_validator = scope_validator or ScopeValidator()
         self.request_builder = request_builder or GraphQLRequestBuilder(self.config)
+        self.execution_budget = execution_budget
 
     def execute(
         self,
@@ -58,6 +61,16 @@ class GraphQLExecutor:
         """Build and optionally execute GraphQL requests."""
         bundle = GraphQLExecutionBundle()
         for payload in self._limited_payloads(payloads):
+            if self.execution_budget is not None:
+                decision = self.execution_budget.allow_request(
+                    payload.endpoint_id,
+                    payload.payload_kind,
+                    ApiStyle.GRAPHQL,
+                )
+                if not decision.allowed:
+                    if decision.reason == "timeout":
+                        bundle.transport_error_count += 0
+                    continue
             request = self.request_builder.build(
                 target.base_url,
                 payload,
@@ -67,9 +80,13 @@ class GraphQLExecutor:
             self.scope_validator.validate(request, target.scope)
             bundle.request_records.append(request)
             bundle.planned_count += 1
+            if self.execution_budget is not None:
+                self.execution_budget.record_planned(payload.endpoint_id, ApiStyle.GRAPHQL)
 
             if self.config.dry_run or not self.config.execute_graphql:
                 bundle.skipped_dry_run_count += 1
+                if self.execution_budget is not None:
+                    self.execution_budget.mark_dry_run_skip()
                 continue
 
             result = self.http_executor.execute(
@@ -79,6 +96,10 @@ class GraphQLExecutor:
                 auth_material=auth_material,
             )
             bundle.execution_results.append(result)
+            if self.execution_budget is not None:
+                if result.status == ExecutionStatus.COMPLETED:
+                    self.execution_budget.record_executed()
+                self.execution_budget.record_retries(result.retry_count)
             if result.status == ExecutionStatus.FAILED:
                 bundle.transport_error_count += 1
                 continue

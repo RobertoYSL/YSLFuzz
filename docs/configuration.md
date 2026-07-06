@@ -20,6 +20,7 @@ Top-level sections:
 - `analysis`: disabled detectors and minimum confidence
 - `reporting`: output path and output format
 - `limits`: optional request, endpoint, and payload budgets
+- `stability`: rate limiting, retry/backoff, and progress settings
 - `safety`: authorization-gate and redaction controls
 - `metadata`: scan name, notes, and tags
 
@@ -176,6 +177,25 @@ GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_p
     "timeout": 5,
     "max_requests": 50
   },
+  "limits": {
+    "max_requests": 50,
+    "max_requests_per_endpoint": 10,
+    "max_duration_seconds": 60,
+    "max_graphql_requests": 25
+  },
+  "stability": {
+    "rate_limit_rps": 2.0,
+    "min_request_delay_ms": 100,
+    "progress": true,
+    "retry": {
+      "enabled": true,
+      "max_retries": 2,
+      "retry_on_status_codes": [429, 500, 502, 503, 504],
+      "backoff_initial_ms": 100,
+      "backoff_multiplier": 2.0,
+      "backoff_max_ms": 1000
+    }
+  },
   "reporting": {
     "output": "graphql_report.json"
   }
@@ -185,6 +205,16 @@ GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_p
 `execution.dry_run` applies to GraphQL. When dry-run is true, YSLFuzz builds planned GraphQL request
 records and executes zero HTTP requests. If both `graphql.max_requests` and `execution.max_requests`
 are set, the stricter limit is used.
+
+## Stability Configuration
+
+`limits.max_requests` maps to `execution.max_requests` when `execution.max_requests` is omitted.
+`limits.max_requests_per_endpoint` caps planned requests per endpoint. `limits.max_duration_seconds`
+stops scheduling new requests after the configured duration and records partial report metadata.
+
+`stability.rate_limit_rps` and `stability.min_request_delay_ms` pace real HTTP execution. They do
+not cause dry-run sleeps. `stability.retry.enabled` must be true before retry settings take effect.
+Retries are bounded and disabled by default.
 
 ## Reporting Metadata
 
@@ -207,6 +237,7 @@ Benchmark configs remain separate from scan configuration profiles for this MVP.
 - GraphQL active authorization probe execution is not implemented; analysis can consume explicitly paired records.
 - GraphQL analysis is conservative and does not confirm vulnerabilities.
 - GraphQL SQL, NoSQL, command and SSRF category support uses inert markers only.
+- KeyboardInterrupt partial-report cancellation is not implemented.
 - No config inheritance or profile composition.
 - No remote config URLs.
 - No secret manager integration.

@@ -24,6 +24,14 @@ from yslfuzz.execution.graphql import (
 from yslfuzz.execution.request_builder import RequestBuilder
 from yslfuzz.execution.scope import ScopeValidator
 from yslfuzz.execution.session import merge_session_cookies, merge_session_headers
+from yslfuzz.execution.stability import (
+    BackoffPolicy,
+    BudgetDecision,
+    ExecutionBudget,
+    ProgressTracker,
+    RateLimiter,
+    RetryPolicy,
+)
 from yslfuzz.execution.value_extractor import ValueExtractionEngine, ValueExtractionError
 from yslfuzz.execution.workflow_executor import WorkflowExecutor
 
@@ -33,9 +41,12 @@ __all__ = [
     "AttackExecutionPlan",
     "AttackExecutionPlanner",
     "AttackExecutor",
+    "BackoffPolicy",
     "BindingResolutionError",
     "BindingResolver",
+    "BudgetDecision",
     "DestructiveMethodBlockedError",
+    "ExecutionBudget",
     "ExecutionError",
     "GraphQLExecutionBundle",
     "GraphQLExecutionConfig",
@@ -43,8 +54,11 @@ __all__ = [
     "GraphQLRequestBuilder",
     "HttpExecutor",
     "InvalidRequestURLError",
+    "ProgressTracker",
+    "RateLimiter",
     "RequestBuildError",
     "RequestBuilder",
+    "RetryPolicy",
     "ScopeValidator",
     "ScopeViolationError",
     "ValueExtractionEngine",

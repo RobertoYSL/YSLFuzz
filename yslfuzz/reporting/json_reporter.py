@@ -147,6 +147,7 @@ class JsonReporter:
                 {},
             )
             data["graphql_analysis_summary"] = metadata.get("graphql_analysis_summary", {})
+            data["stability_summary"] = metadata.get("stability", {})
             data["payload_summary"] = metadata.get("payload_summary", {})
             data["analysis_summary"] = metadata.get("analysis_summary", {})
             data["severity_summary"] = metadata.get("severity_summary", {})

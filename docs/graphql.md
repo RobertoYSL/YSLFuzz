@@ -203,6 +203,10 @@ Useful optional flags:
 --graphql-mutations-only
 --graphql-max-operations 10
 --graphql-include-introspection-probe
+--max-requests 50
+--graphql-max-requests 25
+--max-requests-per-endpoint 10
+--rate-limit-rps 2.0
 ```
 
 Generate boundary payloads in dry-run:
@@ -384,6 +388,7 @@ JSON reports include safe GraphQL metadata:
 - GraphQL responses received;
 - transport error count;
 - GraphQL application error count from response `errors` arrays;
+- stability summary fields such as request budgets, retry counts, timeout state and skipped counts;
 - boundary, invalid, mutated, and attack payload counts;
 - mutation operator counts;
 - attack categories generated;

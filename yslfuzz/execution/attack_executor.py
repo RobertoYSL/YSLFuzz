@@ -85,12 +85,19 @@ class AttackExecutor:
                 )
                 continue
 
-            result = self._http_executor.execute(
-                request,
-                scan_run_id=scan_run_id,
-                timeout_seconds=timeout_seconds,
-                auth_material=auth_material,
-            )
+            try:
+                result = self._http_executor.execute(
+                    request,
+                    scan_run_id=scan_run_id,
+                    timeout_seconds=timeout_seconds,
+                    auth_material=auth_material,
+                )
+            except TypeError:
+                result = self._http_executor.execute(
+                    request,
+                    scan_run_id=scan_run_id,
+                    timeout_seconds=timeout_seconds,
+                )
             results.append(result)
             if result.response_id is not None and result.response_id in self._http_executor.response_records:
                 responses.append(self._http_executor.response_records[result.response_id])

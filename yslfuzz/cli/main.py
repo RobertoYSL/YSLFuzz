@@ -49,6 +49,11 @@ from yslfuzz.execution import (
     HttpExecutor,
     RequestBuilder,
     RequestBuildError,
+    BackoffPolicy,
+    ExecutionBudget,
+    ProgressTracker,
+    RateLimiter,
+    RetryPolicy,
     ScopeValidator,
     ScopeViolationError,
 )
@@ -60,6 +65,7 @@ from yslfuzz.models import (
     AuthProfile,
     AuthType,
     ExecutionResult,
+    ExecutionStatus,
     FindingConfidence,
     HttpMethod,
     Protocol,
@@ -75,6 +81,7 @@ from yslfuzz.models.evaluation import EvaluationReport
 from yslfuzz.models.enums import PayloadKind
 from yslfuzz.models.payload import PayloadCandidate
 from yslfuzz.models.schema import Endpoint
+from yslfuzz.models.stability import RateLimitConfig, RetryConfig, ScanLimits
 from yslfuzz.payloads import (
     AttackGenerationConfig,
     AttackPayloadGenerator,
@@ -320,6 +327,64 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include a bounded safe GraphQL introspection probe when attack payloads are enabled",
     )
+    scan_parser.add_argument(
+        "--rate-limit-rps",
+        type=float,
+        default=None,
+        help="Approximate maximum HTTP requests per second",
+    )
+    scan_parser.add_argument(
+        "--min-request-delay-ms",
+        type=int,
+        default=None,
+        help="Minimum delay between HTTP requests in milliseconds",
+    )
+    scan_parser.add_argument(
+        "--max-requests-per-endpoint",
+        type=int,
+        default=None,
+        help="Maximum planned requests per endpoint",
+    )
+    scan_parser.add_argument(
+        "--max-scan-duration-seconds",
+        type=float,
+        default=None,
+        help="Global scan duration limit in seconds",
+    )
+    scan_parser.add_argument(
+        "--retry",
+        action="store_true",
+        help="Enable conservative retry policy",
+    )
+    scan_parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=0,
+        help="Maximum retry attempts when --retry is enabled",
+    )
+    scan_parser.add_argument(
+        "--retry-status-code",
+        action="append",
+        default=[],
+        help="HTTP status code to retry; may be repeated or comma-separated",
+    )
+    scan_parser.add_argument(
+        "--backoff-initial-ms",
+        type=int,
+        default=100,
+        help="Initial retry backoff in milliseconds",
+    )
+    scan_parser.add_argument(
+        "--backoff-max-ms",
+        type=int,
+        default=2000,
+        help="Maximum retry backoff in milliseconds",
+    )
+    scan_parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Print concise scan progress when verbose output is enabled",
+    )
     scan_parser.set_defaults(func=run_scan_command)
 
     evaluate_parser = subparsers.add_parser(
@@ -436,6 +501,32 @@ def run_scan_command(args: argparse.Namespace) -> int:
         raise FileNotFoundError(f"OpenAPI file does not exist: {openapi_path}")
     if args.max_requests is not None and args.max_requests < 0:
         raise ValueError("--max-requests must be greater than or equal to 0")
+    if getattr(args, "max_requests_per_endpoint", None) is not None and args.max_requests_per_endpoint < 0:
+        raise ValueError("--max-requests-per-endpoint must be greater than or equal to 0")
+    if (
+        getattr(args, "max_scan_duration_seconds", None) is not None
+        and args.max_scan_duration_seconds < 0
+    ):
+        raise ValueError("--max-scan-duration-seconds must be greater than or equal to 0")
+    if getattr(args, "min_request_delay_ms", None) is not None and args.min_request_delay_ms < 0:
+        raise ValueError("--min-request-delay-ms must be greater than or equal to 0")
+    if getattr(args, "rate_limit_rps", None) is not None and args.rate_limit_rps <= 0:
+        raise ValueError("--rate-limit-rps must be greater than 0")
+    if getattr(args, "max_retries", 0) < 0:
+        raise ValueError("--max-retries must be greater than or equal to 0")
+    if getattr(args, "max_requests_per_endpoint", None) is not None and args.max_requests_per_endpoint < 0:
+        raise ValueError("--max-requests-per-endpoint must be greater than or equal to 0")
+    if (
+        getattr(args, "max_scan_duration_seconds", None) is not None
+        and args.max_scan_duration_seconds < 0
+    ):
+        raise ValueError("--max-scan-duration-seconds must be greater than or equal to 0")
+    if getattr(args, "min_request_delay_ms", None) is not None and args.min_request_delay_ms < 0:
+        raise ValueError("--min-request-delay-ms must be greater than or equal to 0")
+    if getattr(args, "rate_limit_rps", None) is not None and args.rate_limit_rps <= 0:
+        raise ValueError("--rate-limit-rps must be greater than 0")
+    if getattr(args, "max_retries", 0) < 0:
+        raise ValueError("--max-retries must be greater than or equal to 0")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than 0")
     if args.max_attack_requests_per_endpoint < 0:
@@ -476,8 +567,10 @@ def run_scan_command(args: argparse.Namespace) -> int:
     request_builder = RequestBuilder()
     auth_injector = AuthInjector()
     scope_validator = ScopeValidator()
-    executor = HttpExecutor()
-    attack_executor = AttackExecutor(request_builder, scope_validator)
+    budget = ExecutionBudget(_scan_limits_from_args(args, api_style=ApiStyle.REST))
+    progress = ProgressTracker(total_endpoints=len(api_schema.endpoints))
+    executor = _http_executor_from_args(args)
+    attack_executor = AttackExecutor(request_builder, scope_validator, http_executor=executor)
     analysis_engine = AnalysisEngine(
         config=analysis_config,
         finding_builder=FindingBuilder(deduplicate=not bool(args.no_deduplicate_findings))
@@ -486,7 +579,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
     total_raw_findings = 0
 
     for endpoint in api_schema.endpoints:
-        if _request_limit_reached(len(requests), args.max_requests):
+        if budget.timed_out():
+            budget.mark_timeout_skip()
             break
         if endpoint.method is None:
             continue
@@ -496,6 +590,10 @@ def run_scan_command(args: argparse.Namespace) -> int:
 
         payload = PayloadGenerator(seed=0).generate_for_endpoint(endpoint)
         payloads.append(payload)
+        progress.total_payloads_generated += 1
+        decision = budget.allow_request(endpoint.endpoint_id, payload.payload_kind, ApiStyle.REST)
+        if not decision.allowed:
+            continue
         baseline_request: RequestRecord | None = None
         baseline_response: ResponseRecord | None = None
 
@@ -512,13 +610,20 @@ def run_scan_command(args: argparse.Namespace) -> int:
             _verbose(args.verbose, f"Blocked destructive endpoint {endpoint.method.value} {endpoint.path}")
             continue
         requests.append(request_record)
+        budget.record_planned(endpoint.endpoint_id, ApiStyle.REST)
+        progress.total_requests_planned += 1
         baseline_request = request_record
 
         if args.dry_run:
+            budget.mark_dry_run_skip()
             mutation_payloads = _mutation_payloads(endpoint, payload, mutation_config)
             payloads.extend(mutation_payloads)
+            progress.total_payloads_generated += len(mutation_payloads)
             if args.include_attack_payloads:
-                payloads.extend(_attack_payloads(endpoint, payload, attack_categories))
+                attack_payloads = _attack_payloads(endpoint, payload, attack_categories)
+                payloads.extend(attack_payloads)
+                progress.total_payloads_generated += len(attack_payloads)
+            progress.endpoints_processed += 1
             continue
 
         result = _execute_request(
@@ -529,6 +634,9 @@ def run_scan_command(args: argparse.Namespace) -> int:
             auth_material=auth_material,
         )
         execution_results.append(result)
+        budget.record_executed()
+        budget.record_retries(result.retry_count)
+        progress.requests_executed += 1
         if result.response_id is not None and result.response_id in executor.response_records:
             baseline_response = executor.response_records[result.response_id]
             responses.append(baseline_response)
@@ -536,6 +644,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
         if args.include_attack_payloads:
             generated_attacks = _attack_payloads(endpoint, payload, attack_categories)
             payloads.extend(generated_attacks)
+            progress.total_payloads_generated += len(generated_attacks)
             if args.execute_attacks and baseline_response is not None and baseline_request is not None:
                 attack_plan = AttackExecutionPlanner(
                     AttackExecutionConfig(
@@ -561,6 +670,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 requests.extend(attack_bundle.request_records)
                 responses.extend(attack_bundle.response_records)
                 execution_results.extend(attack_bundle.execution_results)
+                for attack_request in attack_bundle.request_records:
+                    budget.record_planned(attack_request.endpoint_id, ApiStyle.REST)
+                for attack_result in attack_bundle.execution_results:
+                    if attack_result.status == ExecutionStatus.COMPLETED:
+                        budget.record_executed()
+                    budget.record_retries(attack_result.retry_count)
                 attack_payload_by_id = {attack.payload_id: attack for attack in generated_attacks}
                 attack_records = [
                     (attack_request, attack_response, attack_payload_by_id[attack_request.payload_id])
@@ -578,9 +693,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 total_detector_results += analysis_engine.last_total_detector_results
                 total_raw_findings += analysis_engine.last_total_raw_findings
                 findings.extend(new_findings)
+            elif generated_attacks:
+                budget.mark_unauthorized_attack_skip(len(generated_attacks))
 
         mutation_payloads = _mutation_payloads(endpoint, payload, mutation_config)
         payloads.extend(mutation_payloads)
+        progress.total_payloads_generated += len(mutation_payloads)
         if args.execute_mutations:
             mutation_bundle = _execute_payloads(
                 endpoint=endpoint,
@@ -595,6 +713,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 max_requests=args.max_requests,
                 current_request_count=len(requests),
                 auth_material=auth_material,
+                budget=budget,
+                api_style=ApiStyle.REST,
             )
             requests.extend(mutation_bundle[0])
             responses.extend(mutation_bundle[1])
@@ -617,6 +737,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
                 total_detector_results += analysis_engine.last_total_detector_results
                 total_raw_findings += analysis_engine.last_total_raw_findings
                 findings.extend(new_findings)
+        elif mutation_payloads:
+            budget.mark_unauthorized_mutation_skip(len(mutation_payloads))
+        progress.findings_so_far = len(findings)
+        progress.requests_skipped = budget.skipped_requests
+        progress.endpoints_processed += 1
+        _print_progress(args, progress)
 
     metrics = MetricsCalculator().calculate(
         scan_run_id=scan.scan_run_id,
@@ -654,7 +780,9 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "random_seed": mutation_config.random_seed,
             "max_mutations_per_payload": mutation_config.max_mutations_per_payload,
             "max_mutations_per_field": mutation_config.max_mutations_per_field,
+            "progress": progress.snapshot().model_dump(mode="json"),
             **_auth_report_metadata(auth_profile),
+            **_stability_report_metadata(args, budget),
             **_config_report_metadata(args),
         },
     )
@@ -728,6 +856,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     auth_profile = _auth_profile_from_args(args)
     auth_material = AuthResolver().resolve(auth_profile) if auth_profile is not None else None
     target.auth_profile = auth_profile
+    budget = ExecutionBudget(_scan_limits_from_args(args, api_style=ApiStyle.GRAPHQL))
     scan = ScanRun(
         project_id="project_cli",
         target_id=target.target_id,
@@ -736,7 +865,8 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     )
     execution_bundle = GraphQLExecutor(
         graphql_execution_config,
-        http_executor=HttpExecutor(),
+        http_executor=_http_executor_from_args(args),
+        execution_budget=budget,
     ).execute(
         _graphql_payloads_selected_for_execution(
             valid_payloads=valid_payloads,
@@ -789,7 +919,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         target=target,
         metrics=metrics,
         metadata={
-            "dry_run": True,
+            "dry_run": bool(args.dry_run),
             "api_style": "graphql",
             "graphql_discovery_only": False,
             "graphql_discovery_summary": graphql_schema.discovery_summary(),
@@ -831,6 +961,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
             "random_seed": graphql_payload_config.seed,
             "max_mutations_per_payload": args.max_mutations_per_payload,
             "max_mutations_per_field": args.max_mutations_per_field,
+            **_stability_report_metadata(args, budget),
             **_auth_report_metadata(auth_profile),
             **_config_report_metadata(args),
         },
@@ -998,7 +1129,65 @@ def _config_overrides_from_args(
         args.max_requests,
         provided_options,
     )
+    _set_override(
+        overrides,
+        "limits",
+        "max_requests",
+        "--max-requests",
+        args.max_requests,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "limits",
+        "max_requests_per_endpoint",
+        "--max-requests-per-endpoint",
+        args.max_requests_per_endpoint,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "limits",
+        "max_duration_seconds",
+        "--max-scan-duration-seconds",
+        args.max_scan_duration_seconds,
+        provided_options,
+    )
     _set_override(overrides, "execution", "timeout", "--timeout", args.timeout, provided_options)
+    _set_override(
+        overrides,
+        "stability",
+        "rate_limit_rps",
+        "--rate-limit-rps",
+        args.rate_limit_rps,
+        provided_options,
+    )
+    _set_override(
+        overrides,
+        "stability",
+        "min_request_delay_ms",
+        "--min-request-delay-ms",
+        args.min_request_delay_ms,
+        provided_options,
+    )
+    if "--progress" in provided_options:
+        overrides.setdefault("stability", {})["progress"] = True
+    if "--retry" in provided_options:
+        overrides.setdefault("stability", {}).setdefault("retry", {})["enabled"] = True
+    if "--max-retries" in provided_options:
+        overrides.setdefault("stability", {}).setdefault("retry", {})["max_retries"] = args.max_retries
+    if "--retry-status-code" in provided_options:
+        overrides.setdefault("stability", {}).setdefault("retry", {})[
+            "retry_on_status_codes"
+        ] = _retry_status_codes_from_args(args.retry_status_code)
+    if "--backoff-initial-ms" in provided_options:
+        overrides.setdefault("stability", {}).setdefault("retry", {})[
+            "backoff_initial_ms"
+        ] = args.backoff_initial_ms
+    if "--backoff-max-ms" in provided_options:
+        overrides.setdefault("stability", {}).setdefault("retry", {})[
+            "backoff_max_ms"
+        ] = args.backoff_max_ms
 
     for option, key in (
         ("--allow-destructive", "allow_destructive"),
@@ -1232,6 +1421,16 @@ def _args_from_scan_config(
     effective.output = config.reporting.output
     effective.max_requests = config.execution.max_requests
     effective.timeout = config.execution.timeout
+    effective.max_requests_per_endpoint = config.limits.max_requests_per_endpoint
+    effective.max_scan_duration_seconds = config.limits.max_duration_seconds
+    effective.rate_limit_rps = config.stability.rate_limit_rps
+    effective.min_request_delay_ms = config.stability.min_request_delay_ms
+    effective.retry = config.stability.retry.enabled
+    effective.max_retries = config.stability.retry.max_retries
+    effective.retry_status_code = list(config.stability.retry.retry_on_status_codes)
+    effective.backoff_initial_ms = config.stability.retry.backoff_initial_ms
+    effective.backoff_max_ms = config.stability.retry.backoff_max_ms
+    effective.progress = config.stability.progress
     effective.allow_destructive = config.execution.allow_destructive
     effective.dry_run = config.execution.dry_run
     effective.include_boundary_payloads = config.payloads.include_boundary_payloads
@@ -1431,6 +1630,116 @@ def _attack_categories_from_args(category_names: Sequence[str]) -> list[AttackCa
         except ValueError as exc:
             raise ValueError(f"Unsupported --attack-category: {name}") from exc
     return categories
+
+
+def _retry_status_codes_from_args(values: Sequence[object]) -> list[int]:
+    """Parse repeated or comma-separated retry status codes."""
+    if not values:
+        return [429, 500, 502, 503, 504]
+    codes: list[int] = []
+    for value in values:
+        for item in str(value).split(","):
+            stripped = item.strip()
+            if not stripped:
+                continue
+            code = int(stripped)
+            if code < 100 or code > 599:
+                raise ValueError("--retry-status-code must contain valid HTTP status codes")
+            codes.append(code)
+    return codes or [429, 500, 502, 503, 504]
+
+
+def _scan_limits_from_args(args: argparse.Namespace, *, api_style: ApiStyle) -> ScanLimits:
+    graphql_max_requests = _effective_graphql_request_limit(
+        getattr(args, "graphql_max_requests", None),
+        getattr(args, "max_requests", None),
+    )
+    return ScanLimits(
+        max_requests=getattr(args, "max_requests", None),
+        max_requests_per_endpoint=getattr(args, "max_requests_per_endpoint", None),
+        max_duration_seconds=getattr(args, "max_scan_duration_seconds", None),
+        max_graphql_operations=getattr(args, "graphql_max_operations", None)
+        if api_style == ApiStyle.GRAPHQL
+        else None,
+        max_graphql_requests=graphql_max_requests if api_style == ApiStyle.GRAPHQL else None,
+        max_rest_requests=getattr(args, "max_requests", None) if api_style == ApiStyle.REST else None,
+    )
+
+
+def _rate_limit_config_from_args(args: argparse.Namespace) -> RateLimitConfig:
+    return RateLimitConfig(
+        requests_per_second=getattr(args, "rate_limit_rps", None),
+        min_delay_ms=getattr(args, "min_request_delay_ms", None),
+    )
+
+
+def _retry_config_from_args(args: argparse.Namespace) -> RetryConfig:
+    return RetryConfig(
+        enabled=bool(getattr(args, "retry", False)),
+        max_retries=int(getattr(args, "max_retries", 0) or 0),
+        retry_on_status_codes=_retry_status_codes_from_args(
+            getattr(args, "retry_status_code", []) or []
+        ),
+        backoff_initial_ms=int(getattr(args, "backoff_initial_ms", 100) or 100),
+        backoff_max_ms=int(getattr(args, "backoff_max_ms", 2000) or 2000),
+    )
+
+
+def _http_executor_from_args(args: argparse.Namespace) -> HttpExecutor:
+    rate_config = _rate_limit_config_from_args(args)
+    retry_config = _retry_config_from_args(args)
+    rate_limiter = (
+        RateLimiter(rate_config)
+        if rate_config.requests_per_second is not None or rate_config.min_delay_ms is not None
+        else None
+    )
+    try:
+        return HttpExecutor(
+            rate_limiter=rate_limiter,
+            retry_policy=RetryPolicy(retry_config),
+            backoff_policy=BackoffPolicy(retry_config),
+        )
+    except TypeError:
+        return HttpExecutor()
+
+
+def _stability_report_metadata(
+    args: argparse.Namespace,
+    budget: ExecutionBudget,
+    *,
+    partial_results: bool = False,
+    cancellation_reason: str | None = None,
+) -> dict[str, Any]:
+    rate_config = _rate_limit_config_from_args(args)
+    retry_config = _retry_config_from_args(args)
+    timed_out = budget.timed_out() or budget.skipped_due_to_timeout > 0
+    scan_status = "timed_out" if timed_out else "partial" if partial_results else "completed"
+    finished_at = utc_now()
+    started_seconds = budget.started_at_seconds or 0.0
+    duration_seconds = 0.0
+    if started_seconds:
+        from time import monotonic
+
+        duration_seconds = round(max(0.0, monotonic() - started_seconds), 6)
+    return {
+        "stability": {
+            "scan_status": scan_status,
+            "max_requests": getattr(args, "max_requests", None),
+            "max_requests_per_endpoint": getattr(args, "max_requests_per_endpoint", None),
+            "max_duration_seconds": getattr(args, "max_scan_duration_seconds", None),
+            "rate_limit_rps": rate_config.requests_per_second,
+            "min_request_delay_ms": rate_config.min_delay_ms,
+            "retry_enabled": retry_config.enabled,
+            "max_retries": retry_config.max_retries,
+            "total_retries_attempted": budget.total_retries_attempted,
+            "started_at": budget.started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            "duration_seconds": duration_seconds,
+            "partial_results": partial_results or timed_out,
+            "cancellation_reason": cancellation_reason,
+            **budget.summary(),
+        }
+    }
 
 
 def _attack_payloads(
@@ -1944,12 +2253,18 @@ def _execute_payloads(
     max_requests: int | None,
     current_request_count: int,
     auth_material: ResolvedAuthMaterial | None = None,
+    budget: ExecutionBudget | None = None,
+    api_style: ApiStyle = ApiStyle.REST,
 ) -> tuple[list[RequestRecord], list[ResponseRecord], list[ExecutionResult]]:
     requests: list[RequestRecord] = []
     responses: list[ResponseRecord] = []
     execution_results: list[ExecutionResult] = []
     for payload in payloads:
-        if _request_limit_reached(current_request_count + len(requests), max_requests):
+        if budget is not None:
+            decision = budget.allow_request(endpoint.endpoint_id, payload.payload_kind, api_style)
+            if not decision.allowed:
+                continue
+        elif _request_limit_reached(current_request_count + len(requests), max_requests):
             break
         request_record = request_builder.build(
             endpoint=endpoint,
@@ -1963,6 +2278,8 @@ def _execute_payloads(
         except (DestructiveMethodBlockedError, ScopeViolationError):
             continue
         requests.append(request_record)
+        if budget is not None:
+            budget.record_planned(endpoint.endpoint_id, api_style)
         result = _execute_request(
             executor,
             request_record,
@@ -1971,6 +2288,10 @@ def _execute_payloads(
             auth_material=auth_material,
         )
         execution_results.append(result)
+        if budget is not None:
+            if result.status == ExecutionStatus.COMPLETED:
+                budget.record_executed()
+            budget.record_retries(result.retry_count)
         if result.response_id is not None and result.response_id in executor.response_records:
             responses.append(executor.response_records[result.response_id])
     return requests, responses, execution_results
@@ -2015,6 +2336,22 @@ def _print_summary(
 def _verbose(enabled: bool, message: str) -> None:
     if enabled:
         print(message)
+
+
+def _print_progress(args: argparse.Namespace, progress: ProgressTracker) -> None:
+    if not bool(getattr(args, "progress", False)) and not bool(getattr(args, "verbose", False)):
+        return
+    snapshot = progress.snapshot()
+    print(
+        "YSLFuzz progress: "
+        f"phase={snapshot.current_phase}, "
+        f"endpoints={snapshot.endpoints_processed}/{snapshot.total_endpoints}, "
+        f"payloads={snapshot.total_payloads_generated}, "
+        f"planned={snapshot.total_requests_planned}, "
+        f"executed={snapshot.requests_executed}, "
+        f"skipped={snapshot.requests_skipped}, "
+        f"findings={snapshot.findings_so_far}"
+    )
 
 
 if __name__ == "__main__":

@@ -80,6 +80,14 @@ from yslfuzz.models.schema import (
     TypeDefinition,
     TypeReference,
 )
+from yslfuzz.models.stability import (
+    ProgressSnapshot,
+    RateLimitConfig,
+    RetryConfig,
+    ScanLimits,
+    ScanTimeoutConfig,
+    StabilityPolicy,
+)
 
 __all__ = [
     "REDACTED_VALUE",
@@ -131,7 +139,9 @@ __all__ = [
     "PayloadCandidate",
     "PayloadKind",
     "Project",
+    "ProgressSnapshot",
     "Protocol",
+    "RateLimitConfig",
     "Report",
     "ReportSummary",
     "RequestBodyDefinition",
@@ -139,14 +149,18 @@ __all__ = [
     "ResolvedAuthMaterial",
     "ResponseDefinition",
     "ResponseRecord",
+    "RetryConfig",
     "ScanConfiguration",
+    "ScanLimits",
     "ScanMetrics",
     "ScanRun",
+    "ScanTimeoutConfig",
     "SchemaSource",
     "ScopeDefinition",
     "SecretReference",
     "SecurityFinding",
     "SessionState",
+    "StabilityPolicy",
     "Target",
     "TypeDefinition",
     "TypeReference",

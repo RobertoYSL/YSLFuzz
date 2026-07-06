@@ -247,14 +247,31 @@ class LimitsConfigSection(ConfigModel):
     request_budget: int | None = None
     endpoint_budget: int | None = None
     payload_budget: int | None = None
+    max_requests: int | None = None
+    max_requests_per_endpoint: int | None = None
+    max_payloads_total: int | None = None
+    max_duration_seconds: float | None = None
+    max_graphql_requests: int | None = None
+    max_rest_requests: int | None = None
 
     @model_validator(mode="after")
     def validate_budgets(self) -> "LimitsConfigSection":
         """Reject negative budget values."""
-        for name in ("request_budget", "endpoint_budget", "payload_budget"):
+        for name in (
+            "request_budget",
+            "endpoint_budget",
+            "payload_budget",
+            "max_requests",
+            "max_requests_per_endpoint",
+            "max_payloads_total",
+            "max_graphql_requests",
+            "max_rest_requests",
+        ):
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} must be non-negative")
+        if self.max_duration_seconds is not None and self.max_duration_seconds < 0:
+            raise ValueError("max_duration_seconds must be non-negative")
         return self
 
 
@@ -270,6 +287,55 @@ class SafetyConfigSection(ConfigModel):
         """Keep secret redaction mandatory in the MVP."""
         if not self.redact_secrets:
             raise ValueError("redact_secrets must remain true")
+        return self
+
+
+class RetryConfigSection(ConfigModel):
+    """Retry and backoff configuration for scan stability."""
+
+    enabled: bool = False
+    max_retries: int = 0
+    retry_on_status_codes: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
+    retry_on_timeout: bool = True
+    retry_on_connection_error: bool = True
+    backoff_initial_ms: int = 100
+    backoff_multiplier: float = 2.0
+    backoff_max_ms: int = 2000
+    jitter: bool = False
+    retry_unsafe_methods: bool = False
+
+    @model_validator(mode="after")
+    def validate_retry(self) -> "RetryConfigSection":
+        """Reject unsafe retry values."""
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        if self.backoff_initial_ms < 0:
+            raise ValueError("backoff_initial_ms must be non-negative")
+        if self.backoff_max_ms < 0:
+            raise ValueError("backoff_max_ms must be non-negative")
+        if self.backoff_multiplier < 1:
+            raise ValueError("backoff_multiplier must be greater than or equal to 1")
+        for status_code in self.retry_on_status_codes:
+            if status_code < 100 or status_code > 599:
+                raise ValueError("retry status codes must be valid HTTP status codes")
+        return self
+
+
+class StabilityConfigSection(ConfigModel):
+    """Rate limiting, retry and progress configuration."""
+
+    rate_limit_rps: float | None = None
+    min_request_delay_ms: int | None = None
+    retry: RetryConfigSection = Field(default_factory=RetryConfigSection)
+    progress: bool = False
+
+    @model_validator(mode="after")
+    def validate_stability(self) -> "StabilityConfigSection":
+        """Validate stable scan pacing settings."""
+        if self.rate_limit_rps is not None and self.rate_limit_rps <= 0:
+            raise ValueError("rate_limit_rps must be greater than 0")
+        if self.min_request_delay_ms is not None and self.min_request_delay_ms < 0:
+            raise ValueError("min_request_delay_ms must be non-negative")
         return self
 
 
@@ -292,6 +358,7 @@ class ScanConfig(ConfigModel):
     analysis: AnalysisConfigSection = Field(default_factory=AnalysisConfigSection)
     reporting: ReportingConfigSection = Field(default_factory=ReportingConfigSection)
     limits: LimitsConfigSection = Field(default_factory=LimitsConfigSection)
+    stability: StabilityConfigSection = Field(default_factory=StabilityConfigSection)
     safety: SafetyConfigSection = Field(default_factory=SafetyConfigSection)
     metadata: ScanMetadataSection = Field(default_factory=ScanMetadataSection)
     config_file_path: str | None = None
@@ -302,6 +369,10 @@ class ScanConfig(ConfigModel):
         """Map request_budget to max_requests when max_requests is not set."""
         if self.execution.max_requests is None and self.limits.request_budget is not None:
             self.execution.max_requests = self.limits.request_budget
+        if self.execution.max_requests is None and self.limits.max_requests is not None:
+            self.execution.max_requests = self.limits.max_requests
+        if self.graphql.max_requests is None and self.limits.max_graphql_requests is not None:
+            self.graphql.max_requests = self.limits.max_graphql_requests
         return self
 
     def safe_enabled_modes_summary(self) -> dict[str, Any]:
@@ -325,4 +396,11 @@ class ScanConfig(ConfigModel):
             "graphql_include_subscriptions": self.payloads.graphql_include_subscriptions,
             "graphql_endpoint_path": self.graphql.endpoint_path,
             "graphql_execute_graphql": self.graphql.execute_graphql,
+            "max_requests_per_endpoint": self.limits.max_requests_per_endpoint,
+            "max_duration_seconds": self.limits.max_duration_seconds,
+            "rate_limit_rps": self.stability.rate_limit_rps,
+            "min_request_delay_ms": self.stability.min_request_delay_ms,
+            "retry_enabled": self.stability.retry.enabled,
+            "max_retries": self.stability.retry.max_retries,
+            "progress": self.stability.progress,
         }

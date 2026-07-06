@@ -248,6 +248,20 @@ class BenchmarkRunner:
             "total_payloads_generated": self._sum_mapping(generated),
             "total_payloads_executed": self._sum_mapping(executed),
             "findings_total": metrics.get("findings_total"),
+            **self._stability_metrics_summary(report),
+        }
+
+    def _stability_metrics_summary(self, report: dict[str, Any]) -> dict[str, Any]:
+        stability = report.get("stability_summary", {})
+        if not isinstance(stability, dict):
+            return {}
+        return {
+            "duration_seconds": stability.get("duration_seconds"),
+            "scan_status": stability.get("scan_status"),
+            "total_retries_attempted": stability.get("total_retries_attempted"),
+            "skipped_due_to_budget": stability.get("requests_skipped_due_to_budget"),
+            "timed_out": stability.get("timed_out"),
+            "cancelled": stability.get("scan_status") == "cancelled",
         }
 
     def _evaluation_metrics_summary(self, evaluation_json_path: Path) -> dict[str, Any]:
