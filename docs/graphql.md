@@ -1,7 +1,7 @@
-# GraphQL Discovery and Payload Generation
+# GraphQL Discovery, Payload Generation, and Execution
 
-YSLFuzz supports local GraphQL discovery and deterministic valid GraphQL payload generation.
-This milestone does not execute GraphQL operations.
+YSLFuzz supports local GraphQL discovery, deterministic valid GraphQL payload generation, and safe
+HTTP execution of valid GraphQL operation payloads.
 
 ## Supported Inputs
 
@@ -10,7 +10,8 @@ Supported local files:
 - GraphQL SDL: `.graphql`, `.gql`
 - GraphQL introspection JSON: `.json`
 
-No live introspection, remote schema fetching, or HTTP requests are performed while loading schemas.
+Schema loading is local only. YSLFuzz does not perform live introspection, remote schema fetching,
+or schema downloads.
 
 ## Discovery
 
@@ -25,14 +26,13 @@ Each GraphQL root field is mapped to an endpoint-like operation:
 - GraphQL arguments become `GRAPHQL_ARGUMENT` parameters
 - return type is stored in response metadata
 
-The conservative SDL parser supports object, input, enum, scalar, Query, Mutation and Subscription
-definitions, field arguments, list wrappers and non-null wrappers. It is not a complete GraphQL
-specification parser.
+The SDL parser supports a conservative subset: object, input, enum, scalar, Query, Mutation and
+Subscription definitions, field arguments, list wrappers and non-null wrappers.
 
 ## Valid Payload Generation
 
 `GraphQLPayloadGenerator` generates safe `PayloadCandidate` objects from a parsed `GraphQLSchema`.
-Each candidate body uses the future GraphQL-over-HTTP JSON shape:
+Each candidate body uses the GraphQL-over-HTTP JSON shape:
 
 ```json
 {
@@ -63,15 +63,11 @@ string `yslfuzz-string`. Enum generation chooses the first allowed enum value de
 
 No secrets, tokens, cookies, API keys, passwords, JWTs, or real credentials are generated.
 
-## Variables and Input Objects
+## Selection and Variables
 
 Variables are enabled by default. Operation arguments become variable definitions and variable
-bindings. Input objects include required and optional fields within the configured bounds. Nested
-input objects and lists are bounded by `max_input_depth` and `max_list_items`.
-
-If `generate_variables` is disabled in code, safe literals are inlined instead.
-
-## Selection Sets
+bindings. Input objects include fields within configured bounds. Nested input objects and lists are
+bounded by `max_input_depth` and `max_list_items`.
 
 Selection sets are deterministic and bounded:
 
@@ -84,9 +80,32 @@ Selection sets are deterministic and bounded:
 
 Default limits are `max_selection_depth=2` and `max_fields_per_selection=5`.
 
+## Execution
+
+GraphQL execution uses a POST request to the configured GraphQL endpoint path. The default endpoint
+path is `/graphql`.
+
+Request headers include:
+
+- `Content-Type: application/json`
+- `Accept: application/json`
+
+The request body contains `query`, `variables`, and `operationName` when present. Authentication
+profiles are applied through the same auth resolver and injector used by REST execution.
+
+Dry-run mode builds planned GraphQL request records but executes zero HTTP requests. Non-dry-run
+mode executes only valid GraphQL payloads through the shared `HttpExecutor`.
+
+GraphQL HTTP 200 responses with an `errors` array are captured as response metadata:
+
+- `graphql_has_errors`
+- `graphql_error_count`
+
+These errors are not classified as vulnerabilities in this milestone.
+
 ## CLI Usage
 
-Generate GraphQL discovery and payload summary without HTTP execution:
+Dry-run planning:
 
 ```bash
 uv run yslfuzz scan \
@@ -96,9 +115,22 @@ uv run yslfuzz scan \
   --output graphql_report.json
 ```
 
+Execution against an authorized local GraphQL endpoint:
+
+```bash
+uv run yslfuzz scan \
+  --graphql-schema examples/graphql/simple_users_schema.graphql \
+  --base-url http://localhost:8080 \
+  --graphql-endpoint /graphql \
+  --graphql-max-requests 20 \
+  --output graphql_report.json
+```
+
 Useful optional flags:
 
 ```bash
+--graphql-endpoint /graphql
+--graphql-max-requests 20
 --graphql-max-selection-depth 2
 --graphql-max-fields-per-selection 5
 --graphql-queries-only
@@ -106,12 +138,11 @@ Useful optional flags:
 --graphql-max-operations 10
 ```
 
-The CLI always executes zero GraphQL HTTP requests in this milestone and prints a clear message
-that GraphQL execution is planned for Milestone 21.
+`--openapi` and `--graphql-schema` remain mutually exclusive.
 
 ## Configuration
 
-Configuration profiles can select GraphQL discovery and payload generation:
+Configuration profiles can select GraphQL discovery, payload generation, and execution settings:
 
 ```json
 {
@@ -120,16 +151,18 @@ Configuration profiles can select GraphQL discovery and payload generation:
     "graphql_schema_path": "examples/graphql/simple_users_schema.graphql",
     "base_url": "http://localhost:8080"
   },
-  "payloads": {
-    "graphql_include_queries": true,
-    "graphql_include_mutations": true,
-    "graphql_include_subscriptions": false,
-    "graphql_max_selection_depth": 2,
-    "graphql_max_fields_per_selection": 5,
-    "graphql_max_operations": 10
+  "graphql": {
+    "endpoint_path": "/graphql",
+    "max_selection_depth": 2,
+    "max_fields_per_selection": 5,
+    "include_queries": true,
+    "include_mutations": true,
+    "max_requests": 20
   },
   "execution": {
-    "dry_run": true
+    "dry_run": true,
+    "timeout": 5,
+    "max_requests": 50
   },
   "reporting": {
     "output": "graphql_report.json"
@@ -137,8 +170,20 @@ Configuration profiles can select GraphQL discovery and payload generation:
 }
 ```
 
-Config support is limited to local schema discovery and valid payload generation. It does not enable
-GraphQL execution.
+`execution.dry_run` always prevents HTTP execution. If both `graphql.max_requests` and
+`execution.max_requests` are set, the stricter request limit is used.
+
+## Authentication
+
+Authentication profiles work with GraphQL execution:
+
+- bearer token env var becomes an `Authorization` header;
+- API key env var becomes the configured API key header;
+- cookie auth becomes a `Cookie` header;
+- custom auth header env vars become their configured headers.
+
+Config files and CLI arguments must reference environment variable names only. Raw auth values are
+redacted in request records, reports, summaries, and serialized models.
 
 ## Reporting
 
@@ -149,19 +194,25 @@ JSON reports include safe GraphQL metadata:
 - generated payload counts by query, mutation and subscription;
 - generated operation names;
 - configured selection limits;
-- `execution_enabled: false`;
-- a note that GraphQL execution is not implemented until Milestone 21.
+- `graphql_endpoint_path`;
+- GraphQL requests planned, executed, and skipped by dry-run;
+- GraphQL responses received;
+- transport error count;
+- GraphQL application error count from response `errors` arrays;
+- `execution_enabled`;
+- `dry_run`.
 
-Reports do not include raw authentication material. Query bodies are present as payload bodies in
-the internal report model and remain subject to the existing report redaction layer.
+Reports do not include raw authentication material.
 
 ## Current Limitations
 
-- No GraphQL HTTP execution until Milestone 21.
 - No GraphQL invalid, boundary, mutation or attack payloads until Milestone 22.
 - No GraphQL-specific vulnerability analysis until Milestone 23.
+- No batching.
+- No subscriptions or WebSocket execution.
 - No live introspection over HTTP.
 - No remote schema fetching.
-- No DoS-style deep query generation, batching probes, aliasing abuse or fragment expansion.
-- No authentication-specific GraphQL behavior.
+- No multipart upload.
+- No GET-based GraphQL execution.
+- No DoS-style deep query generation, aliasing abuse or fragment expansion.
 - The built-in SDL parser intentionally supports a conservative subset.

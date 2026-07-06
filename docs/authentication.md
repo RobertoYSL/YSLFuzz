@@ -72,6 +72,15 @@ Redaction covers common sensitive names including `Authorization`, `Proxy-Author
 
 Redaction is applied to request summaries, response summaries, evidence, findings, JSON reports, Markdown reports, benchmark artifacts that contain scan output, and display helpers for resolved auth material.
 
+## GraphQL Execution
+
+Authentication profiles also apply to GraphQL valid payload execution. Bearer, API key, cookie, and
+custom header modes are resolved from environment variables and injected into GraphQL POST requests
+using the same redaction behavior as REST requests.
+
+Dry-run GraphQL scans may include redacted auth markers in planned request records, but execute zero
+HTTP requests.
+
 ## Dry Run, Mutations, and Attacks
 
 Dry-run scans do not execute authenticated requests. They may still include safe report metadata indicating that authentication was configured.

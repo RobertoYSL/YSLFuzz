@@ -140,6 +140,7 @@ class JsonReporter:
             data["target_summary"] = metadata.get("target_summary")
             data["request_response_summary"] = metadata.get("request_response_summary", [])
             data["payload_generation_summary"] = metadata.get("payload_generation_summary", {})
+            data["graphql_execution_summary"] = metadata.get("graphql_execution", {})
             data["payload_summary"] = metadata.get("payload_summary", {})
             data["analysis_summary"] = metadata.get("analysis_summary", {})
             data["severity_summary"] = metadata.get("severity_summary", {})
@@ -311,6 +312,7 @@ class JsonReporter:
             "mutation_execution_enabled": bool(metadata.get("mutation_execution_enabled", False)),
             "attack_execution_enabled": bool(metadata.get("attack_execution_enabled", False)),
             "graphql_payload_generation": metadata.get("graphql_payload_generation", {}),
+            "graphql_execution": metadata.get("graphql_execution", {}),
             "random_seed": metadata.get("random_seed"),
             "max_mutations_per_payload": metadata.get("max_mutations_per_payload"),
             "max_mutations_per_field": metadata.get("max_mutations_per_field"),

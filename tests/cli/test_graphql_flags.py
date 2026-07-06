@@ -22,10 +22,21 @@ class GraphQLFakeHttpExecutor:
         request_record: Any,
         scan_run_id: str,
         timeout_seconds: float = 10.0,
+        auth_material: Any = None,
     ) -> ExecutionResult:
+        del auth_material
         self.calls.append(request_record.url)
+        response = ResponseRecord(
+            request_id=request_record.request_id,
+            status_code=200,
+            body_preview='{"data":{"ok":true}}',
+            body_hash="hash",
+            body_size_bytes=20,
+        )
+        self.response_records[response.response_id] = response
         return ExecutionResult(
             request_id=request_record.request_id,
+            response_id=response.response_id,
             status=ExecutionStatus.COMPLETED,
             metadata={"scan_run_id": scan_run_id, "timeout_seconds": timeout_seconds},
         )
@@ -39,6 +50,8 @@ def test_cli_exposes_graphql_flag_in_scan_help(capsys: pytest.CaptureFixture[str
     output = capsys.readouterr().out
     assert "--graphql-schema" in output
     assert "--graphql-max-selection-depth" in output
+    assert "--graphql-endpoint" in output
+    assert "--graphql-max-requests" in output
 
 
 def test_cli_rejects_openapi_and_graphql_schema_together(
@@ -79,6 +92,7 @@ def test_cli_can_run_graphql_discovery_path_without_executing_requests(
             "examples/graphql/simple_users_schema.graphql",
             "--base-url",
             "http://localhost:8080",
+            "--dry-run",
             "--output",
             str(output_path),
         ]
@@ -93,11 +107,14 @@ def test_cli_can_run_graphql_discovery_path_without_executing_requests(
     assert report["metadata"]["graphql_payload_generation_implemented"] is True
     assert report["metadata"]["graphql_payload_generation"]["graphql_payloads_generated"] == 3
     assert report["metadata"]["graphql_payload_generation"]["execution_enabled"] is False
-    assert report["metrics"]["total_requests"] == 0
+    assert report["metadata"]["graphql_execution"]["graphql_requests_planned"] == 3
+    assert report["metadata"]["graphql_execution"]["graphql_requests_executed"] == 0
+    assert report["metadata"]["graphql_execution"]["graphql_requests_skipped_dry_run"] == 3
+    assert report["metrics"]["total_requests"] == 3
     assert report["metrics"]["valid_payloads_generated"] == 3
 
 
-def test_cli_gives_clear_message_that_graphql_execution_is_not_implemented(
+def test_cli_gives_clear_graphql_execution_summary(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -108,6 +125,7 @@ def test_cli_gives_clear_message_that_graphql_execution_is_not_implemented(
             "examples/graphql/simple_users_schema.graphql",
             "--base-url",
             "http://localhost:8080",
+            "--dry-run",
             "--output",
             str(tmp_path / "graphql-report.json"),
         ]
@@ -115,7 +133,8 @@ def test_cli_gives_clear_message_that_graphql_execution_is_not_implemented(
 
     output = capsys.readouterr().out
     assert "GraphQL discovery and payload generation succeeded" in output
-    assert "GraphQL execution is not implemented until Milestone 21" in output
+    assert "planned=3" in output
+    assert "executed=0" in output
 
 
 def test_cli_graphql_queries_only_flag_limits_payloads(tmp_path: Path) -> None:
@@ -128,6 +147,7 @@ def test_cli_graphql_queries_only_flag_limits_payloads(tmp_path: Path) -> None:
             "examples/graphql/simple_users_schema.graphql",
             "--base-url",
             "http://localhost:8080",
+            "--dry-run",
             "--output",
             str(output_path),
             "--graphql-queries-only",
@@ -138,3 +158,37 @@ def test_cli_graphql_queries_only_flag_limits_payloads(tmp_path: Path) -> None:
     assert exit_code == 0
     assert report["metadata"]["graphql_payload_generation"]["graphql_query_payloads_generated"] == 2
     assert report["metadata"]["graphql_payload_generation"]["graphql_mutation_payloads_generated"] == 0
+
+
+def test_cli_graphql_non_dry_run_executes_with_local_fake_executor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    GraphQLFakeHttpExecutor.calls = []
+    monkeypatch.setattr(CLI_MAIN, "HttpExecutor", GraphQLFakeHttpExecutor)
+    output_path = tmp_path / "graphql-report.json"
+
+    exit_code = CLI_MAIN.main(
+        [
+            "scan",
+            "--graphql-schema",
+            "examples/graphql/simple_users_schema.graphql",
+            "--base-url",
+            "http://localhost:8080",
+            "--output",
+            str(output_path),
+            "--graphql-endpoint",
+            "/api/graphql",
+            "--graphql-max-requests",
+            "1",
+        ]
+    )
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert GraphQLFakeHttpExecutor.calls == ["http://localhost:8080/api/graphql"]
+    assert report["metadata"]["graphql_execution"]["graphql_endpoint_path"] == "/api/graphql"
+    assert report["metadata"]["graphql_execution"]["graphql_requests_planned"] == 1
+    assert report["metadata"]["graphql_execution"]["graphql_requests_executed"] == 1
+    assert report["metadata"]["graphql_execution"]["graphql_responses_received"] == 1
+    assert report["metrics"]["successful_requests"] == 1

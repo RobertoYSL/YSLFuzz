@@ -15,6 +15,12 @@ from yslfuzz.execution.attack_plan import (
 )
 from yslfuzz.execution.bindings import BindingResolutionError, BindingResolver
 from yslfuzz.execution.executor import HttpExecutor
+from yslfuzz.execution.graphql import (
+    GraphQLExecutionBundle,
+    GraphQLExecutionConfig,
+    GraphQLExecutor,
+    GraphQLRequestBuilder,
+)
 from yslfuzz.execution.request_builder import RequestBuilder
 from yslfuzz.execution.scope import ScopeValidator
 from yslfuzz.execution.session import merge_session_cookies, merge_session_headers
@@ -31,6 +37,10 @@ __all__ = [
     "BindingResolver",
     "DestructiveMethodBlockedError",
     "ExecutionError",
+    "GraphQLExecutionBundle",
+    "GraphQLExecutionConfig",
+    "GraphQLExecutor",
+    "GraphQLRequestBuilder",
     "HttpExecutor",
     "InvalidRequestURLError",
     "RequestBuildError",

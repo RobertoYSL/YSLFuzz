@@ -158,6 +158,37 @@ class PayloadsConfigSection(ConfigModel):
         return self
 
 
+class GraphQLConfigSection(ConfigModel):
+    """GraphQL discovery, payload generation, and execution settings."""
+
+    endpoint_path: str = "/graphql"
+    include_queries: bool = True
+    include_mutations: bool = True
+    include_subscriptions: bool = False
+    max_selection_depth: int = 2
+    max_fields_per_selection: int = 5
+    max_operations: int | None = None
+    max_requests: int | None = None
+    execute_graphql: bool = True
+
+    @model_validator(mode="after")
+    def validate_graphql_settings(self) -> "GraphQLConfigSection":
+        """Validate safe GraphQL settings."""
+        if not self.endpoint_path.startswith("/"):
+            raise ValueError("graphql endpoint_path must start with '/'")
+        if "://" in self.endpoint_path:
+            raise ValueError("graphql endpoint_path must be a local path, not a URL")
+        if self.max_selection_depth < 0:
+            raise ValueError("graphql max_selection_depth must be non-negative")
+        if self.max_fields_per_selection <= 0:
+            raise ValueError("graphql max_fields_per_selection must be greater than 0")
+        if self.max_operations is not None and self.max_operations < 0:
+            raise ValueError("graphql max_operations must be non-negative")
+        if self.max_requests is not None and self.max_requests < 0:
+            raise ValueError("graphql max_requests must be non-negative")
+        return self
+
+
 class ExecutionConfigSection(ConfigModel):
     """HTTP execution and opt-in execution configuration."""
 
@@ -241,6 +272,7 @@ class ScanConfig(ConfigModel):
     target: TargetConfigSection
     auth: AuthConfigSection = Field(default_factory=AuthConfigSection)
     payloads: PayloadsConfigSection = Field(default_factory=PayloadsConfigSection)
+    graphql: GraphQLConfigSection = Field(default_factory=GraphQLConfigSection)
     execution: ExecutionConfigSection = Field(default_factory=ExecutionConfigSection)
     analysis: AnalysisConfigSection = Field(default_factory=AnalysisConfigSection)
     reporting: ReportingConfigSection = Field(default_factory=ReportingConfigSection)
@@ -271,4 +303,6 @@ class ScanConfig(ConfigModel):
             "graphql_include_queries": self.payloads.graphql_include_queries,
             "graphql_include_mutations": self.payloads.graphql_include_mutations,
             "graphql_include_subscriptions": self.payloads.graphql_include_subscriptions,
+            "graphql_endpoint_path": self.graphql.endpoint_path,
+            "graphql_execute_graphql": self.graphql.execute_graphql,
         }

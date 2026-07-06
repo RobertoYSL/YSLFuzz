@@ -15,6 +15,7 @@ Top-level sections:
 - `target`: `openapi_path`, `base_url`, optional `api_style`, `target_id`, `target_name`
 - `auth`: environment-variable references for bearer, API key header, cookie, or custom headers
 - `payloads`: payload generation modes and limits
+- `graphql`: GraphQL endpoint, payload-generation limits, and GraphQL request limits
 - `execution`: dry-run, timeout, request limit, destructive-method and execution opt-ins
 - `analysis`: disabled detectors and minimum confidence
 - `reporting`: output path and output format
@@ -22,7 +23,9 @@ Top-level sections:
 - `safety`: authorization-gate and redaction controls
 - `metadata`: scan name, notes, and tags
 
-The MVP supports REST/OpenAPI scan configuration only. GraphQL-specific configuration is reserved for future GraphQL milestones.
+Configuration profiles support REST/OpenAPI scans and local GraphQL schema scans. GraphQL execution
+settings are limited to valid payload execution; GraphQL attack and mutation payload settings are
+reserved for later milestones.
 
 ## Safe Defaults
 
@@ -36,6 +39,8 @@ When a config file is used:
 - `mutate_sensitive_fields = false`
 - `redact_secrets = true`
 - auth entries are environment variable names only
+- GraphQL endpoint defaults to `/graphql`
+- GraphQL config execution remains governed by `execution.dry_run`
 
 Existing CLI behavior is preserved when `--config` is not used.
 
@@ -115,6 +120,40 @@ The equivalent CLI acknowledgement flags can satisfy these gates after config lo
 
 Dry-run still prevents HTTP execution.
 
+## GraphQL Configuration
+
+GraphQL profiles use `target.api_style = "GRAPHQL"` and `target.graphql_schema_path`.
+
+```json
+{
+  "target": {
+    "api_style": "GRAPHQL",
+    "graphql_schema_path": "examples/graphql/simple_users_schema.graphql",
+    "base_url": "http://localhost:8080"
+  },
+  "graphql": {
+    "endpoint_path": "/graphql",
+    "max_selection_depth": 2,
+    "max_fields_per_selection": 5,
+    "include_queries": true,
+    "include_mutations": true,
+    "max_requests": 20
+  },
+  "execution": {
+    "dry_run": true,
+    "timeout": 5,
+    "max_requests": 50
+  },
+  "reporting": {
+    "output": "graphql_report.json"
+  }
+}
+```
+
+`execution.dry_run` applies to GraphQL. When dry-run is true, YSLFuzz builds planned GraphQL request
+records and executes zero HTTP requests. If both `graphql.max_requests` and `execution.max_requests`
+are set, the stricter limit is used.
+
 ## Reporting Metadata
 
 Reports include safe config metadata:
@@ -133,7 +172,7 @@ Benchmark configs remain separate from scan configuration profiles for this MVP.
 
 ## Limitations
 
-- No GraphQL-specific configuration.
+- No GraphQL mutation, invalid, boundary or attack payload configuration yet.
 - No config inheritance or profile composition.
 - No remote config URLs.
 - No secret manager integration.
