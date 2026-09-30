@@ -10,6 +10,7 @@ from yslfuzz.models.analysis import DetectorResult, SecurityFinding
 from yslfuzz.models.enums import FindingConfidence, FindingSeverity
 from yslfuzz.models.execution import RequestRecord, ResponseRecord
 from yslfuzz.models.payload import PayloadCandidate
+from yslfuzz.models.schema import Endpoint
 
 
 CONFIDENCE_RANK = {
@@ -28,6 +29,7 @@ class AnalysisEngine:
         config: AnalysisConfig | None = None,
         detectors: Sequence[ResponseDetector] | None = None,
         finding_builder: FindingBuilder | None = None,
+        endpoints: Sequence[Endpoint] | None = None,
     ) -> None:
         self.config = config or AnalysisConfig()
         self.registry = DetectorRegistry(detectors=detectors, config=self.config)
@@ -36,6 +38,26 @@ class AnalysisEngine:
         self.last_total_detector_results = 0
         self.last_total_raw_findings = 0
         self.last_total_deduplicated_findings = 0
+        if endpoints:
+            self.register_endpoints(endpoints)
+
+    def register_endpoints(self, endpoints: Sequence[Endpoint]) -> None:
+        """Register endpoints with schema conformance detectors."""
+        for detector in self.detectors:
+            if hasattr(detector, "set_endpoints"):
+                detector.set_endpoints(endpoints)
+
+    def analyze_baseline(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        scan_run_id: str,
+    ) -> tuple[list[DetectorResult], list[SecurityFinding]]:
+        """Analyze a baseline response alone for crashes and schema conformance."""
+        detector_results: list[DetectorResult] = []
+        for detector in self.detectors:
+            detector_results.extend(detector.detect_baseline(baseline_request, baseline_response))
+        return self._finalize(detector_results, scan_run_id)
 
     def analyze(
         self,
@@ -71,6 +93,11 @@ class AnalysisEngine:
             for request, response in baseline_records
         }
         detector_results: list[DetectorResult] = []
+        for baseline_request, baseline_response in baseline_records:
+            for detector in self.detectors:
+                detector_results.extend(
+                    detector.detect_baseline(baseline_request, baseline_response)
+                )
         for attack_request, attack_response, attack_payload in test_records:
             baseline = baselines_by_endpoint.get(attack_request.endpoint_id)
             if baseline is None:

@@ -21,6 +21,9 @@ class AnalysisConfig(YSLFuzzModel):
     enable_validation_bypass_detection: bool = True
     enable_mass_assignment_detection: bool = True
     enable_authz_bypass_detection: bool = True
+    enable_baseline_crash_detection: bool = True
+    enable_schema_conformance_detection: bool = True
+    enable_bola_detection: bool = True
     enable_graphql_error_disclosure: bool = True
     enable_graphql_validation_bypass: bool = True
     enable_graphql_introspection_exposure: bool = True
@@ -85,6 +88,9 @@ class AnalysisConfig(YSLFuzzModel):
             "enable_validation_bypass_detection": self.enable_validation_bypass_detection,
             "enable_mass_assignment_detection": self.enable_mass_assignment_detection,
             "enable_authz_bypass_detection": self.enable_authz_bypass_detection,
+            "enable_baseline_crash_detection": self.enable_baseline_crash_detection,
+            "enable_schema_conformance_detection": self.enable_schema_conformance_detection,
+            "enable_bola_detection": self.enable_bola_detection,
             "enable_graphql_error_disclosure": self.enable_graphql_error_disclosure,
             "enable_graphql_validation_bypass": self.enable_graphql_validation_bypass,
             "enable_graphql_introspection_exposure": self.enable_graphql_introspection_exposure,

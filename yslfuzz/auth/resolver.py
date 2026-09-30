@@ -3,8 +3,10 @@
 import os
 from collections.abc import Mapping
 
+import httpx
 from pydantic import SecretStr
 
+from yslfuzz.auth.lifecycle import AuthLifecycleError, AuthLifecycleManager, DynamicAuthConfig
 from yslfuzz.models.auth import AuthCredentialRef, AuthProfile, ResolvedAuthMaterial
 from yslfuzz.models.enums import AuthType
 
@@ -14,13 +16,38 @@ class AuthResolutionError(ValueError):
 
 
 class AuthResolver:
-    """Resolve authentication material from environment variables at runtime."""
+    """Resolve authentication material from environment variables or login flow at runtime."""
 
-    def __init__(self, environ: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        environ: Mapping[str, str] | None = None,
+        client: httpx.Client | None = None,
+        base_url: str | None = None,
+    ) -> None:
         self._environ = environ if environ is not None else os.environ
+        self._client = client
+        self._base_url = base_url
 
     def resolve(self, profile: AuthProfile) -> ResolvedAuthMaterial:
         """Resolve an auth profile into runtime HTTP header material."""
+        if profile.login_url is not None:
+            config = DynamicAuthConfig(
+                login_url=profile.login_url,
+                body=profile.login_body or {},
+                headers=profile.login_headers or {"Content-Type": "application/json"},
+                token_field=profile.token_field,
+                token_type=profile.token_type,
+                username_env=profile.login_user_env,
+                password_env=profile.login_pass_env,
+                username_field=profile.username_field,
+                password_field=profile.password_field,
+            )
+            manager = AuthLifecycleManager(client=self._client, environ=self._environ)
+            try:
+                return manager.authenticate(config, base_url=self._base_url)
+            except AuthLifecycleError as exc:
+                raise AuthResolutionError(str(exc)) from exc
+
         if profile.auth_type == AuthType.BEARER:
             credential = self._read_required(profile.credential_ref)
             return ResolvedAuthMaterial(

@@ -58,8 +58,17 @@ class AuthConfigSection(ConfigModel):
     cookie_env: str | None = None
     cookie_name: str = "session"
     custom_headers: list[str] = Field(default_factory=list)
+    login_url: str | None = None
+    login_payload: str | None = None
+    login_user_env: str | None = None
+    login_pass_env: str | None = None
+    token_field: str = "token"
+    token_type: str = "Bearer"
+    user2_bearer_env: str | None = None
+    user2_login_url: str | None = None
+    user2_login_payload: str | None = None
 
-    @field_validator("bearer_env", "api_key_env", "cookie_env")
+    @field_validator("bearer_env", "api_key_env", "cookie_env", "login_user_env", "login_pass_env", "user2_bearer_env")
     @classmethod
     def validate_env_name(cls, value: str | None) -> str | None:
         """Validate auth env var references without reading environment values."""
@@ -101,6 +110,7 @@ class AuthConfigSection(ConfigModel):
                 self.api_key_env,
                 self.cookie_env,
                 self.custom_headers,
+                self.login_url,
             )
         )
         if configured_modes > 1:
@@ -113,7 +123,13 @@ class AuthConfigSection(ConfigModel):
 
     def configured(self) -> bool:
         """Return true when any auth mode is configured."""
-        return bool(self.bearer_env or self.api_key_env or self.cookie_env or self.custom_headers)
+        return bool(
+            self.bearer_env
+            or self.api_key_env
+            or self.cookie_env
+            or self.custom_headers
+            or self.login_url
+        )
 
 
 class PayloadsConfigSection(ConfigModel):
@@ -207,6 +223,9 @@ class ExecutionConfigSection(ConfigModel):
     execute_attacks: bool = False
     i_understand_mutation_execution_is_authorized: bool = False
     i_understand_attack_execution_is_authorized: bool = False
+    stateful: bool = False
+    enable_workflows: bool = False
+    enable_bola_check: bool = False
 
     @model_validator(mode="after")
     def validate_execution_limits(self) -> "ExecutionConfigSection":

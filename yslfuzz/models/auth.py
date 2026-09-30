@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, field_serializer, field_validator, model_validator
 
@@ -80,6 +80,15 @@ class AuthProfile(YSLFuzzModel):
     auth_scheme_id: str | None = None
     login_workflow_id: str | None = None
     refresh_workflow_id: str | None = None
+    login_url: str | None = None
+    login_body: dict[str, Any] | None = None
+    login_headers: dict[str, str] = Field(default_factory=dict)
+    login_user_env: str | None = None
+    login_pass_env: str | None = None
+    username_field: str = "email"
+    password_field: str = "password"
+    token_field: str = "token"
+    token_type: str = "Bearer"
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -115,27 +124,27 @@ class AuthProfile(YSLFuzzModel):
     def validate_profile(self) -> "AuthProfile":
         """Validate supported MVP authentication profile shapes."""
         if self.auth_type == AuthType.BEARER:
-            if self.credential_ref is None:
-                raise ValueError("bearer authentication requires an environment credential reference")
+            if self.credential_ref is None and self.login_url is None:
+                raise ValueError("bearer authentication requires an environment credential reference or login URL")
             object.__setattr__(self, "location", AuthLocation.HEADER)
             object.__setattr__(self, "header_name", "Authorization")
         elif self.auth_type == AuthType.API_KEY:
-            if self.credential_ref is None:
-                raise ValueError("API key header authentication requires an environment credential reference")
+            if self.credential_ref is None and self.login_url is None:
+                raise ValueError("API key header authentication requires an environment credential reference or login URL")
             object.__setattr__(self, "location", AuthLocation.HEADER)
             object.__setattr__(
                 self,
                 "header_name",
-                self.header_name or self.credential_ref.header_name or "X-API-Key",
+                self.header_name or (self.credential_ref.header_name if self.credential_ref else None) or "X-API-Key",
             )
         elif self.auth_type == AuthType.COOKIE:
-            if self.credential_ref is None:
-                raise ValueError("cookie authentication requires an environment credential reference")
+            if self.credential_ref is None and self.login_url is None:
+                raise ValueError("cookie authentication requires an environment credential reference or login URL")
             object.__setattr__(self, "location", AuthLocation.COOKIE)
             object.__setattr__(
                 self,
                 "cookie_name",
-                self.cookie_name or self.credential_ref.cookie_name or "session",
+                self.cookie_name or (self.credential_ref.cookie_name if self.credential_ref else None) or "session",
             )
         elif self.auth_type == AuthType.CUSTOM:
             refs = self._custom_refs()
@@ -166,10 +175,17 @@ class AuthProfile(YSLFuzzModel):
 
     def redacted_display(self) -> dict[str, object]:
         """Return safe auth metadata without raw values or environment variable names."""
+        auth_sources: list[str] = []
+        if self.credential_ref is not None or self.credential_refs:
+            auth_sources.append("environment")
+        if self.login_url is not None:
+            auth_sources.append("login")
+        if not auth_sources:
+            auth_sources = ["environment"]
         return {
             "authentication_enabled": True,
             "authentication_types": self.authentication_types(),
-            "auth_sources": ["environment"],
+            "auth_sources": auth_sources,
             "auth_redaction_applied": True,
         }
 
@@ -188,7 +204,7 @@ class ResolvedAuthMaterial(YSLFuzzModel):
 
     auth_type: AuthType
     headers: dict[str, SecretStr] = Field(default_factory=dict)
-    source: Literal["environment"] = "environment"
+    source: str = "environment"
 
     @field_serializer("headers")
     def serialize_headers(self, values: dict[str, SecretStr]) -> dict[str, str]:

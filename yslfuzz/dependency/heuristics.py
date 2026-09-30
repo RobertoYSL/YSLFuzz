@@ -35,7 +35,8 @@ def is_identifier_parameter(parameter: Parameter) -> bool:
 
 def normalize_identifier_name(name: str) -> str:
     """Normalize an identifier-like name for graph matching."""
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", s).strip("_").lower()
     if normalized == "uuid":
         return "id"
     return normalized
@@ -53,9 +54,15 @@ def resource_name_for_endpoint(endpoint: Endpoint) -> str:
     """Infer a resource name from a REST endpoint path."""
     if not endpoint.path:
         return "resource"
-    for part in endpoint.path.strip("/").split("/"):
-        if part and not part.startswith("{"):
-            return singularize_resource(part)
+    parts = [p for p in endpoint.path.strip("/").split("/") if p and not p.startswith("{")]
+    meaningful = [
+        p for p in parts
+        if p.lower() not in {"api", "v1", "v2", "v3", "v4", "v2_7", "v4_0"}
+    ]
+    if meaningful:
+        return singularize_resource(meaningful[-1])
+    if parts:
+        return singularize_resource(parts[-1])
     return "resource"
 
 

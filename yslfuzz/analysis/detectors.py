@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
@@ -11,6 +12,7 @@ from yslfuzz.analysis.config import AnalysisConfig
 from yslfuzz.models.analysis import DetectorResult, Evidence
 from yslfuzz.models.enums import (
     AttackCategory,
+    FieldType,
     FindingConfidence,
     FindingSeverity,
     ParameterLocation,
@@ -18,6 +20,7 @@ from yslfuzz.models.enums import (
 )
 from yslfuzz.models.execution import RequestRecord, ResponseRecord
 from yslfuzz.models.payload import PayloadCandidate
+from yslfuzz.models.schema import Endpoint, ResponseDefinition
 
 
 class ResponseDetector(ABC):
@@ -29,6 +32,14 @@ class ResponseDetector(ABC):
 
     def __init__(self, config: AnalysisConfig | None = None) -> None:
         self.config = config or AnalysisConfig()
+
+    def detect_baseline(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+    ) -> list[DetectorResult]:
+        """Return detector results for a baseline response alone."""
+        return []
 
     @abstractmethod
     def detect(
@@ -631,3 +642,397 @@ class BasicAuthorizationBypassDetector(ResponseDetector):
         if baseline_size <= 0:
             return attack_size <= 32
         return abs(attack_size - baseline_size) / baseline_size <= 0.1
+
+
+class BaselineCrashDetector(ResponseDetector):
+    """Detect unhandled 5xx server crashes on conforming baseline requests."""
+
+    detector_id = "detector_baseline_crash"
+    name = "BaselineCrashDetector"
+
+    def detect_baseline(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+    ) -> list[DetectorResult]:
+        if baseline_response.status_code >= 500:
+            evidence = [
+                self._evidence(
+                    baseline_request,
+                    baseline_response,
+                    "baseline_5xx_crash",
+                    f"Baseline request conforming to schema caused unhandled {baseline_response.status_code} server error.",
+                    f"HTTP {baseline_response.status_code}",
+                    redacted=False,
+                )
+            ]
+            result = DetectorResult(
+                detector_id=self.detector_id,
+                request_id=baseline_request.request_id,
+                response_id=baseline_response.response_id,
+                matched=True,
+                confidence=FindingConfidence.HIGH,
+                severity=FindingSeverity.HIGH,
+                evidence=evidence,
+                reason=f"Baseline request caused unhandled {baseline_response.status_code} Internal Server Error",
+            )
+            result.metadata.update(
+                {
+                    "detector_name": self.name,
+                    "detector_version": self.version,
+                    "endpoint_id": baseline_request.endpoint_id,
+                    "endpoint_identity": f"{baseline_request.method.value} {urlparse(baseline_request.url).path or '/'}",
+                    "attack_category": AttackCategory.INPUT_VALIDATION.value,
+                    "status_code": baseline_response.status_code,
+                    "status_code_class": f"{str(baseline_response.status_code)[0]}xx",
+                    "oracle_type": "baseline_crash",
+                }
+            )
+            return [result]
+        return []
+
+    def detect(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        attack_request: RequestRecord,
+        attack_response: ResponseRecord,
+        attack_payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        del attack_request, attack_response, attack_payload
+        if baseline_response.status_code >= 500:
+            return self.detect_baseline(baseline_request, baseline_response)
+        return []
+
+
+class SchemaConformanceDetector(ResponseDetector):
+    """Detect violations between server responses and documented OpenAPI response definitions."""
+
+    detector_id = "detector_schema_conformance"
+    name = "SchemaConformanceDetector"
+
+    def __init__(
+        self,
+        config: AnalysisConfig | None = None,
+        endpoints_by_id: Mapping[str, Endpoint] | None = None,
+    ) -> None:
+        super().__init__(config=config)
+        self._endpoints_by_id: dict[str, Endpoint] = (
+            dict(endpoints_by_id) if endpoints_by_id is not None else {}
+        )
+
+    def set_endpoints(self, endpoints: Sequence[Endpoint]) -> None:
+        """Register endpoints with their documented response schemas."""
+        self._endpoints_by_id = {endpoint.endpoint_id: endpoint for endpoint in endpoints}
+
+    def check_response(
+        self,
+        request: RequestRecord,
+        response: ResponseRecord,
+    ) -> list[DetectorResult]:
+        endpoint = self._endpoints_by_id.get(request.endpoint_id)
+        if endpoint is None or not endpoint.responses:
+            return []
+
+        results: list[DetectorResult] = []
+        matching_def = self._find_matching_response_def(endpoint, response.status_code)
+
+        if matching_def is None:
+            is_5xx = response.status_code >= 500
+            severity = FindingSeverity.HIGH if is_5xx else FindingSeverity.MEDIUM
+            reason = (
+                f"Undocumented 5xx status code {response.status_code} not specified in schema responses"
+                if is_5xx
+                else f"Undocumented status code {response.status_code} not specified in schema responses"
+            )
+            evidence = [
+                self._evidence(
+                    request,
+                    response,
+                    "undocumented_status_code",
+                    reason,
+                    str(response.status_code),
+                    redacted=False,
+                )
+            ]
+            result = DetectorResult(
+                detector_id=self.detector_id,
+                request_id=request.request_id,
+                response_id=response.response_id,
+                matched=True,
+                confidence=FindingConfidence.HIGH,
+                severity=severity,
+                evidence=evidence,
+                reason=reason,
+            )
+            result.metadata.update(
+                {
+                    "detector_name": self.name,
+                    "detector_version": self.version,
+                    "endpoint_id": request.endpoint_id,
+                    "endpoint_identity": f"{request.method.value} {urlparse(request.url).path or '/'}",
+                    "attack_category": AttackCategory.INPUT_VALIDATION.value,
+                    "status_code": response.status_code,
+                    "status_code_class": f"{str(response.status_code)[0]}xx",
+                    "conformance_violation": "undocumented_status_code",
+                }
+            )
+            results.append(result)
+            return results
+
+        if matching_def.content_type and response.headers:
+            content_type_header = None
+            for key, val in response.headers.items():
+                if key.lower() == "content-type":
+                    content_type_header = str(val).lower()
+                    break
+            if content_type_header and matching_def.content_type.lower() not in content_type_header:
+                reason = (
+                    f"Response Content-Type '{content_type_header}' does not match "
+                    f"documented '{matching_def.content_type}'"
+                )
+                evidence = [
+                    self._evidence(
+                        request,
+                        response,
+                        "content_type_mismatch",
+                        reason,
+                        content_type_header,
+                        redacted=False,
+                    )
+                ]
+                result = DetectorResult(
+                    detector_id=self.detector_id,
+                    request_id=request.request_id,
+                    response_id=response.response_id,
+                    matched=True,
+                    confidence=FindingConfidence.HIGH,
+                    severity=FindingSeverity.MEDIUM,
+                    evidence=evidence,
+                    reason=reason,
+                )
+                result.metadata.update(
+                    {
+                        "detector_name": self.name,
+                        "detector_version": self.version,
+                        "endpoint_id": request.endpoint_id,
+                        "endpoint_identity": f"{request.method.value} {urlparse(request.url).path or '/'}",
+                        "attack_category": AttackCategory.INPUT_VALIDATION.value,
+                        "status_code": response.status_code,
+                        "conformance_violation": "content_type_mismatch",
+                    }
+                )
+                results.append(result)
+
+        if matching_def.fields and response.body_preview:
+            parsed = self._parse_json_preview(response.body_preview)
+            if isinstance(parsed, dict):
+                for field in matching_def.fields:
+                    if field.required and field.name not in parsed:
+                        reason = f"Required field '{field.name}' missing from response body"
+                        evidence = [
+                            self._evidence(
+                                request,
+                                response,
+                                "missing_required_field",
+                                reason,
+                                field.name,
+                                redacted=False,
+                                field_name=field.name,
+                            )
+                        ]
+                        result = DetectorResult(
+                            detector_id=self.detector_id,
+                            request_id=request.request_id,
+                            response_id=response.response_id,
+                            matched=True,
+                            confidence=FindingConfidence.HIGH,
+                            severity=FindingSeverity.MEDIUM,
+                            evidence=evidence,
+                            reason=reason,
+                        )
+                        result.metadata.update(
+                            {
+                                "detector_name": self.name,
+                                "detector_version": self.version,
+                                "endpoint_id": request.endpoint_id,
+                                "endpoint_identity": f"{request.method.value} {urlparse(request.url).path or '/'}",
+                                "attack_category": AttackCategory.INPUT_VALIDATION.value,
+                                "status_code": response.status_code,
+                                "target_field": field.name,
+                                "conformance_violation": "missing_required_field",
+                            }
+                        )
+                        results.append(result)
+                    elif field.name in parsed and parsed[field.name] is not None:
+                        val = parsed[field.name]
+                        type_error = self._check_field_type(field.field_type, val)
+                        if type_error:
+                            reason = f"Field '{field.name}' type mismatch: expected {field.field_type.value}, got {type_error}"
+                            evidence = [
+                                self._evidence(
+                                    request,
+                                    response,
+                                    "field_type_mismatch",
+                                    reason,
+                                    type_error,
+                                    redacted=False,
+                                    field_name=field.name,
+                                )
+                            ]
+                            result = DetectorResult(
+                                detector_id=self.detector_id,
+                                request_id=request.request_id,
+                                response_id=response.response_id,
+                                matched=True,
+                                confidence=FindingConfidence.MEDIUM,
+                                severity=FindingSeverity.LOW,
+                                evidence=evidence,
+                                reason=reason,
+                            )
+                            result.metadata.update(
+                                {
+                                    "detector_name": self.name,
+                                    "detector_version": self.version,
+                                    "endpoint_id": request.endpoint_id,
+                                    "endpoint_identity": f"{request.method.value} {urlparse(request.url).path or '/'}",
+                                    "attack_category": AttackCategory.INPUT_VALIDATION.value,
+                                    "status_code": response.status_code,
+                                    "target_field": field.name,
+                                    "conformance_violation": "field_type_mismatch",
+                                }
+                            )
+                            results.append(result)
+
+        return results
+
+    def _check_field_type(self, expected_type: FieldType, val: Any) -> str | None:
+        if expected_type == FieldType.INTEGER:
+            if not isinstance(val, int) or isinstance(val, bool):
+                return type(val).__name__
+        elif expected_type == FieldType.BOOLEAN:
+            if not isinstance(val, bool):
+                return type(val).__name__
+        elif expected_type == FieldType.STRING:
+            if not isinstance(val, str):
+                return type(val).__name__
+        elif expected_type == FieldType.ARRAY:
+            if not isinstance(val, list):
+                return type(val).__name__
+        elif expected_type == FieldType.OBJECT:
+            if not isinstance(val, dict):
+                return type(val).__name__
+        return None
+
+    def _parse_json_preview(self, body_preview: str | None) -> Any:
+        if not body_preview:
+            return None
+        text = body_preview.strip()
+        if (text.startswith("{") and text.endswith("}")) or (
+            text.startswith("[") and text.endswith("]")
+        ):
+            try:
+                return json.loads(text)
+            except Exception:
+                return None
+        return None
+
+    def _find_matching_response_def(
+        self,
+        endpoint: Endpoint,
+        status_code: int,
+    ) -> ResponseDefinition | None:
+        range_match = None
+        default_match = None
+        status_str = str(status_code)
+        range_str = f"{status_code // 100}xx"
+
+        for resp in endpoint.responses:
+            code_str = str(resp.status_code).lower()
+            if code_str == status_str:
+                return resp
+            if code_str == range_str:
+                range_match = resp
+            elif code_str in ("default", "default_response"):
+                default_match = resp
+
+        return range_match or default_match
+
+    def detect_baseline(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+    ) -> list[DetectorResult]:
+        return self.check_response(baseline_request, baseline_response)
+
+    def detect(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        attack_request: RequestRecord,
+        attack_response: ResponseRecord,
+        attack_payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        del baseline_request, baseline_response, attack_payload
+        return self.check_response(attack_request, attack_response)
+
+
+class BolaDetector(ResponseDetector):
+    """Detect Broken Object Level Authorization (BOLA/IDOR) where secondary identity accesses primary identity's resource."""
+
+    detector_id = "detector_bola"
+    name = "BolaDetector"
+
+    def detect(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        attack_request: RequestRecord,
+        attack_response: ResponseRecord,
+        attack_payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        del baseline_request, baseline_response
+        if not self._is_bola_test(attack_request, attack_payload):
+            return []
+
+        if self._is_success(attack_response):
+            target_res = (
+                attack_request.metadata.get("target_resource_id")
+                or attack_payload.metadata.get("target_resource_id")
+                or "object"
+            )
+            reason = (
+                f"Broken Object Level Authorization (BOLA/IDOR) detected: "
+                f"secondary identity accessed resource '{target_res}' with status {attack_response.status_code}"
+            )
+            evidence = [
+                self._evidence(
+                    attack_request,
+                    attack_response,
+                    "bola_unauthorized_access",
+                    reason,
+                    f"HTTP {attack_response.status_code} for secondary user accessing primary user resource",
+                    redacted=False,
+                )
+            ]
+            result = self._result(
+                attack_request,
+                attack_response,
+                attack_payload,
+                confidence=FindingConfidence.HIGH,
+                severity=FindingSeverity.HIGH,
+                evidence=evidence,
+                reason=reason,
+            )
+            result.metadata["attack_category"] = AttackCategory.BROKEN_ACCESS_CONTROL.value
+            result.metadata["oracle_type"] = "bola_differential"
+            return [result]
+
+        return []
+
+    def _is_bola_test(self, request: RequestRecord, payload: PayloadCandidate) -> bool:
+        if request.metadata.get("bola_test") or payload.metadata.get("bola_test"):
+            return True
+        if payload.attack_category == AttackCategory.BROKEN_ACCESS_CONTROL:
+            return bool(request.metadata.get("multi_user_differential"))
+        return False
