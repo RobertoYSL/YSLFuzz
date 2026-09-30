@@ -27,6 +27,19 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run a REST/OpenAPI or GraphQL scan",
     )
     scan_parser.add_argument("--config", default=None, help="JSON/YAML scan configuration file")
+    scan_parser.add_argument(
+        "--preset",
+        choices=["quick", "standard", "deep", "full"],
+        default=None,
+        help="Scan intensity preset: 'quick' (stateless sanity check), 'standard' (stateful baseline + conformance), 'deep'/'full' (stateful, mutations, attacks, active fuzzing)",
+    )
+    scan_parser.add_argument(
+        "-y",
+        "--yes",
+        dest="yes",
+        action="store_true",
+        help="Automatically answer yes to safety confirmation prompts",
+    )
     schema_group = scan_parser.add_mutually_exclusive_group()
     schema_group.add_argument("--openapi", default=None, help="Local OpenAPI YAML/JSON file")
     schema_group.add_argument(
@@ -36,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument("--base-url", default=None, help="Target base URL")
     scan_parser.add_argument("--output", default=None, help="JSON report output path")
+    scan_parser.add_argument("--markdown", default=None, help="Markdown report output path")
     scan_parser.add_argument("--max-requests", type=int, default=None, help="Maximum requests to build")
     scan_parser.add_argument(
         "--timeout",

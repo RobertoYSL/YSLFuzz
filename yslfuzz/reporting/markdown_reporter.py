@@ -1,5 +1,6 @@
 """Minimal Markdown report generation."""
 
+from pathlib import Path
 from typing import Any
 
 from yslfuzz.models.reporting import Report
@@ -37,6 +38,21 @@ class MarkdownReporter:
             ]
         )
         lines.extend(self._summary_table(data.get("severity_summary", {}), "Severity"))
+        metadata = data.get("metadata", {})
+        if isinstance(metadata, dict):
+            wf = metadata.get("stateful_workflows")
+            if isinstance(wf, dict) and wf.get("enabled"):
+                lines.extend(
+                    [
+                        "",
+                        "## Stateful Workflows",
+                        "",
+                        "- Enabled: `True`",
+                        f"- Workflows detected: `{wf.get('workflows_detected', 0)}`",
+                        f"- Workflows executed: `{wf.get('workflows_executed', 0)}`",
+                        f"- Dynamic parameters propagated: `{wf.get('known_values_extracted', 0)}`",
+                    ]
+                )
         lines.extend(["", "## Endpoint Summary", ""])
         lines.extend(self._endpoint_table(data.get("endpoint_summary", [])))
         lines.extend(["", "## Findings", ""])
@@ -44,6 +60,13 @@ class MarkdownReporter:
         lines.extend(["", "## Reproducibility", ""])
         lines.extend(self._metadata_lines(data.get("reproducibility", {})))
         return "\n".join(lines).rstrip() + "\n"
+
+    def write_markdown(self, report: Report, path: str | Path) -> Path:
+        """Write a redacted Markdown report to a file and return the written path."""
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(self.to_markdown(report), encoding="utf-8")
+        return output_path
 
     def _target_lines(self, target: Any) -> list[str]:
         if not isinstance(target, dict) or not target:

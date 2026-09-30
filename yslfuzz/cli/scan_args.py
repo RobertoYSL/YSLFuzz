@@ -70,7 +70,151 @@ def _provided_options(argv: Sequence[str]) -> set[str]:
     return options
 
 
+def _apply_preset(args: argparse.Namespace) -> None:
+    """Expand preset profiles into concrete scan options unless explicitly overridden."""
+    preset = getattr(args, "preset", None)
+    if not preset:
+        return
+    preset = str(preset).lower()
+    provided: set[str] = getattr(args, "_provided_options", set())
+
+    if preset == "quick":
+        if "--stateful" not in provided and "--enable-workflows" not in provided:
+            args.stateful = False
+        if "--include-boundary-payloads" not in provided:
+            args.include_boundary_payloads = False
+        if "--include-invalid-payloads" not in provided:
+            args.include_invalid_payloads = False
+        if "--include-mutated-payloads" not in provided:
+            args.include_mutated_payloads = False
+        if "--include-attack-payloads" not in provided:
+            args.include_attack_payloads = False
+        if "--execute-mutations" not in provided:
+            args.execute_mutations = False
+        if "--execute-attacks" not in provided:
+            args.execute_attacks = False
+        if "--enable-bola-check" not in provided:
+            args.enable_bola_check = False
+
+    elif preset == "standard":
+        if "--stateful" not in provided and "--enable-workflows" not in provided:
+            args.stateful = True
+        if "--include-boundary-payloads" not in provided:
+            args.include_boundary_payloads = False
+        if "--include-invalid-payloads" not in provided:
+            args.include_invalid_payloads = False
+        if "--include-mutated-payloads" not in provided:
+            args.include_mutated_payloads = False
+        if "--include-attack-payloads" not in provided:
+            args.include_attack_payloads = False
+        if "--execute-mutations" not in provided:
+            args.execute_mutations = False
+        if "--execute-attacks" not in provided:
+            args.execute_attacks = False
+        if "--enable-bola-check" not in provided:
+            args.enable_bola_check = False
+
+    elif preset in ("deep", "full"):
+        if "--stateful" not in provided and "--enable-workflows" not in provided:
+            args.stateful = True
+        if "--include-boundary-payloads" not in provided:
+            args.include_boundary_payloads = True
+        if "--include-invalid-payloads" not in provided:
+            args.include_invalid_payloads = True
+        if "--include-mutated-payloads" not in provided:
+            args.include_mutated_payloads = True
+        if "--include-attack-payloads" not in provided:
+            args.include_attack_payloads = True
+        if "--execute-mutations" not in provided:
+            args.execute_mutations = True
+        if "--execute-attacks" not in provided:
+            args.execute_attacks = True
+        if "--enable-bola-check" not in provided:
+            if bool(getattr(args, "auth_user2_bearer_env", None)):
+                args.enable_bola_check = True
+
+
+def _confirm_dangerous_execution(
+    args: argparse.Namespace,
+    target_url: str | None = None,
+) -> bool:
+    """Prompt user for confirmation if active attacks or mutations are requested.
+
+    Returns True if confirmed and authorized to proceed, False if user cancelled.
+    Raises ValueError if non-interactive and neither -y/--yes nor legacy authorization was given.
+    """
+    if bool(getattr(args, "dry_run", False)):
+        return True
+
+    attacks_active = bool(getattr(args, "execute_attacks", False))
+    mutations_active = bool(getattr(args, "execute_mutations", False))
+    if not attacks_active and not mutations_active:
+        return True
+
+    # Check if already confirmed via -y / --yes or legacy flags
+    confirmed_by_flag = bool(getattr(args, "yes", False))
+    has_legacy_attack_auth = bool(getattr(args, "i_understand_this_is_authorized", False))
+    has_legacy_mutation_auth = bool(
+        getattr(args, "i_understand_mutation_execution_is_authorized", False)
+    )
+
+    if attacks_active and mutations_active:
+        if confirmed_by_flag or (has_legacy_attack_auth and has_legacy_mutation_auth):
+            args.i_understand_this_is_authorized = True
+            args.i_understand_mutation_execution_is_authorized = True
+            return True
+    elif attacks_active:
+        if confirmed_by_flag or has_legacy_attack_auth:
+            args.i_understand_this_is_authorized = True
+            return True
+    elif mutations_active:
+        if confirmed_by_flag or has_legacy_mutation_auth:
+            args.i_understand_mutation_execution_is_authorized = True
+            return True
+
+    # If stdin is not interactive (e.g. CI/CD or automated test), we cannot prompt
+    if not sys.stdin.isatty():
+        raise ValueError(
+            "Active attack or mutation execution requires confirmation. "
+            "In automated or non-interactive environments, pass '-y' / '--yes' to proceed."
+        )
+
+    # Interactive prompt
+    print("\n" + "=" * 80)
+    print("⚠️   AVVISO DI SICUREZZA - SCANSIONE ATTIVA / MUTAZIONI")
+    print("=" * 80)
+    if target_url:
+        print(f" Target bersaglio: {target_url}")
+    print(" Questa modalità invierà traffico di penetrazione e fuzzing che include:")
+    if attacks_active:
+        print("   • Payload di attacco (SQLi, Command Injection, BOLA differential testing)")
+    if mutations_active:
+        print("   • Mutazioni estreme (boundary values, payload non validi, type-confusion)")
+    print("\n Possibili conseguenze:")
+    print("   • Modifiche o cancellazioni di dati nel database di test")
+    print("   • Errori 500 / crash o instabilità temporanea del servizio")
+    print("   • Allarmi o blocchi di sicurezza nei log di rete")
+    print("\n Assicurati di avere l'autorizzazione per eseguire penetration testing su questo target.")
+    print("=" * 80)
+
+    try:
+        reply = input("Vuoi procedere con la scansione? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nScansione annullata.")
+        return False
+
+    if reply in ("y", "yes"):
+        print("Conferma ricevuta. Avvio della scansione...\n")
+        args.i_understand_this_is_authorized = True
+        args.i_understand_mutation_execution_is_authorized = True
+        return True
+
+    print("Scansione annullata dall'utente.")
+    return False
+
+
 def _effective_scan_args(args: argparse.Namespace) -> argparse.Namespace:
+    _apply_preset(args)
     config_path = getattr(args, "config", None)
     if config_path is None:
         args._config_file_used = False
@@ -83,7 +227,9 @@ def _effective_scan_args(args: argparse.Namespace) -> argparse.Namespace:
     merged_config = ConfigMerger().merge(config, overrides)
     ConfigValidator().validate(merged_config)
     config_hash = ConfigHasher().hash(merged_config)
-    return _args_from_scan_config(args, merged_config, config_hash)
+    effective = _args_from_scan_config(args, merged_config, config_hash)
+    _apply_preset(effective)
+    return effective
 
 
 def _config_overrides_from_args(
@@ -1012,6 +1158,12 @@ def _print_summary(
     failed_requests: int,
     findings_total: int,
     dry_run: bool,
+    markdown_path: Path | None = None,
+    findings: Sequence[Any] = (),
+    endpoints: Sequence[Any] = (),
+    workflow_stats: dict[str, Any] | None = None,
+    target_url: str | None = None,
+    preset: str | None = None,
 ) -> None:
     mode = "dry-run" if dry_run else "executed"
     print(
@@ -1027,6 +1179,91 @@ def _print_summary(
         f"findings={findings_total}, "
         f"report={output_path}"
     )
+
+    lines = [
+        "",
+        "=" * 80,
+        "                         YSLFUZZ SCAN SUMMARY                          ",
+        "=" * 80,
+    ]
+    if target_url:
+        lines.append(f" Target:            {target_url}")
+    lines.append(f" Mode:              {mode}" + (f" (preset: {preset})" if preset else ""))
+    lines.append(f" Endpoints:         {total_endpoints}")
+    lines.append(
+        f" Requests:          {total_requests} (successful: {successful_requests}, failed: {failed_requests})"
+    )
+    lines.append(
+        f" Payloads:          {payloads_generated} "
+        f"(valid: {valid_payloads_generated}, boundary: {boundary_payloads_generated}, "
+        f"invalid: {invalid_payloads_generated}, mutated: {mutated_payloads_generated}, "
+        f"attack: {attack_payloads_generated})"
+    )
+    if workflow_stats:
+        lines.append(
+            f" Workflows:         {workflow_stats.get('workflows_executed', 0)}/{workflow_stats.get('workflows_detected', 0)} executed "
+            f"({workflow_stats.get('known_values_extracted', 0)} dynamic parameters propagated)"
+        )
+
+    lines.append("-" * 80)
+    lines.append(f" Findings Total:    {findings_total}")
+
+    if findings_total > 0 and findings:
+        sev_counts: dict[str, int] = {}
+        for f in findings:
+            sev = getattr(f, "severity", None)
+            sev_str = (sev.value if hasattr(sev, "value") else str(sev)) if sev is not None else "UNKNOWN"
+            sev_counts[sev_str] = sev_counts.get(sev_str, 0) + 1
+
+        for sev_name, icon in (
+            ("CRITICAL", "🔴"),
+            ("HIGH", "🔴"),
+            ("MEDIUM", "🟡"),
+            ("LOW", "🔵"),
+            ("INFO", "⚪"),
+        ):
+            if sev_name in sev_counts:
+                lines.append(f"   {icon} {sev_name:<10}: {sev_counts[sev_name]}")
+
+        endpoint_map: dict[str, str] = {}
+        for ep in endpoints:
+            ep_id = getattr(ep, "endpoint_id", None)
+            if ep_id:
+                m = getattr(ep, "method", None)
+                m_str = (m.value if hasattr(m, "value") else str(m)) if m else ""
+                p_str = getattr(ep, "path", "")
+                endpoint_map[ep_id] = f"{m_str} {p_str}".strip()
+
+        ep_findings: dict[str, list[Any]] = {}
+        for f in findings:
+            ep_id_raw = getattr(f, "endpoint_id", None)
+            ep_id_str: str = str(ep_id_raw) if ep_id_raw is not None else "unknown"
+            ep_findings.setdefault(ep_id_str, []).append(f)
+
+        if ep_findings:
+            lines.append("")
+            lines.append(" Top Vulnerable Endpoints:")
+            sorted_eps = sorted(ep_findings.items(), key=lambda kv: len(kv[1]), reverse=True)
+            for ep_id, f_list in sorted_eps[:5]:
+                ep_desc = endpoint_map.get(ep_id, ep_id)
+                sevs = sorted({
+                    (
+                        getattr(f, "severity").value
+                        if hasattr(getattr(f, "severity"), "value")
+                        else str(getattr(f, "severity"))
+                    )
+                    for f in f_list
+                    if hasattr(f, "severity")
+                })
+                lines.append(f"   • {ep_desc:<45} [{', '.join(sevs)}] ({len(f_list)} findings)")
+
+    lines.append("-" * 80)
+    lines.append(f" JSON Report:       {output_path}")
+    if markdown_path:
+        lines.append(f" Markdown Report:   {markdown_path}")
+    lines.append("=" * 80)
+
+    print("\n".join(lines))
 
 
 def _verbose(enabled: bool, message: str) -> None:

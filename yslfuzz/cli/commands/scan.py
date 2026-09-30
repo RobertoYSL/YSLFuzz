@@ -17,6 +17,7 @@ from yslfuzz.cli.scan_args import (
     _auth_report_metadata,
     _auth_user2_profile_from_args,
     _config_report_metadata,
+    _confirm_dangerous_execution,
     _effective_scan_args,
     _execute_payloads,
     _execute_request,
@@ -100,6 +101,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
         raise ValueError("--max-mutations-per-payload must be greater than or equal to 0")
     if args.max_mutations_per_field < 0:
         raise ValueError("--max-mutations-per-field must be greater than or equal to 0")
+    if not _confirm_dangerous_execution(args, target_url=args.base_url):
+        return 0
     if args.execute_attacks and not args.i_understand_this_is_authorized:
         raise ValueError("--execute-attacks requires --i-understand-this-is-authorized")
     if args.execute_mutations and not args.i_understand_mutation_execution_is_authorized:
@@ -481,9 +484,15 @@ def run_scan_command(args: argparse.Namespace) -> int:
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
+    markdown_path: Path | None = None
+    if getattr(args, "markdown", None):
+        from yslfuzz.reporting.markdown_reporter import MarkdownReporter
+
+        markdown_path = MarkdownReporter().write_markdown(report, args.markdown)
 
     _print_summary(
         output_path=output_path,
+        markdown_path=markdown_path,
         total_endpoints=metrics.total_endpoints,
         payloads_generated=metrics.payloads_generated,
         valid_payloads_generated=metrics.valid_payloads_generated,
@@ -496,5 +505,16 @@ def run_scan_command(args: argparse.Namespace) -> int:
         failed_requests=metrics.failed_requests,
         findings_total=metrics.findings_total,
         dry_run=bool(args.dry_run),
+        findings=findings,
+        endpoints=api_schema.endpoints,
+        workflow_stats={
+            "workflows_detected": len(executable_workflows),
+            "workflows_executed": executed_workflows_count,
+            "known_values_extracted": len(cumulative_known_values),
+        }
+        if stateful_enabled
+        else None,
+        target_url=args.base_url,
+        preset=getattr(args, "preset", None),
     )
     return 0

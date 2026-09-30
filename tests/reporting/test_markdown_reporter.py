@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from yslfuzz.models import (
     ApiStyle,
     AttackCategory,
@@ -11,6 +13,7 @@ from yslfuzz.models import (
     ScanRun,
     SecurityFinding,
 )
+from yslfuzz.models.reporting import Report
 from yslfuzz.models.schema import Endpoint
 from yslfuzz.reporting import JsonReporter, MarkdownReporter
 
@@ -36,7 +39,32 @@ def test_markdown_reporter_remains_redacted() -> None:
     assert "[REDACTED]" in markdown
 
 
-def _report(secret_preview: str = "200->500") -> object:
+def test_markdown_reporter_write_markdown(tmp_path: Path) -> None:
+    reporter = MarkdownReporter()
+    target_file = tmp_path / "subdir" / "report.md"
+    written_path = reporter.write_markdown(_report(), target_file)
+
+    assert written_path == target_file
+    assert target_file.exists()
+    assert "# YSLFuzz Scan Report" in target_file.read_text(encoding="utf-8")
+
+
+def test_markdown_reporter_renders_stateful_workflows() -> None:
+    rep = _report()
+    rep.metadata["stateful_workflows"] = {
+        "enabled": True,
+        "workflows_detected": 5,
+        "workflows_executed": 3,
+        "known_values_extracted": 2,
+    }
+    markdown = MarkdownReporter().to_markdown(rep)
+
+    assert "## Stateful Workflows" in markdown
+    assert "Workflows detected: `5`" in markdown
+    assert "Workflows executed: `3`" in markdown
+
+
+def _report(secret_preview: str = "200->500") -> Report:
     endpoint = Endpoint(
         endpoint_id="endpoint_1",
         api_schema_id="schema_1",

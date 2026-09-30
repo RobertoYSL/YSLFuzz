@@ -32,6 +32,7 @@ from yslfuzz.cli.commands.scan import run_scan_command
 from yslfuzz.cli.parser import build_parser
 from yslfuzz.cli.scan_args import (
     _analysis_config_from_args,
+    _apply_preset,
     _args_from_scan_config,
     _attack_categories_from_args,
     _attack_payloads,
@@ -42,6 +43,7 @@ from yslfuzz.cli.scan_args import (
     _auth_user2_profile_from_args,
     _config_overrides_from_args,
     _config_report_metadata,
+    _confirm_dangerous_execution,
     _effective_graphql_request_limit,
     _effective_scan_args,
     _execute_payloads,
@@ -118,6 +120,8 @@ __all__ = [
     "_auth_user2_profile_from_args",
     "_parse_auth_header",
     "_auth_report_metadata",
+    "_confirm_dangerous_execution",
+    "_apply_preset",
     "_execute_request",
     "_mutation_payloads",
     "_execute_payloads",

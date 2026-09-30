@@ -15,6 +15,7 @@ from yslfuzz.cli.scan_args import (
     _auth_profile_from_args,
     _auth_report_metadata,
     _config_report_metadata,
+    _confirm_dangerous_execution,
     _effective_graphql_request_limit,
     _http_executor_from_args,
     _print_summary,
@@ -371,6 +372,8 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         raise ValueError("--max-mutations-per-field must be greater than or equal to 0")
     if args.max_attack_requests_per_endpoint < 0:
         raise ValueError("--max-attack-requests-per-endpoint must be greater than or equal to 0")
+    if not _confirm_dangerous_execution(args, target_url=args.base_url):
+        return 0
     if args.execute_mutations and not args.i_understand_mutation_execution_is_authorized:
         raise ValueError(
             "--execute-mutations requires --i-understand-mutation-execution-is-authorized"
@@ -518,9 +521,15 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         },
     )
     output_path = JsonReporter().write_json(report, args.output)
+    markdown_path: Path | None = None
+    if getattr(args, "markdown", None):
+        from yslfuzz.reporting.markdown_reporter import MarkdownReporter
+
+        markdown_path = MarkdownReporter().write_markdown(report, args.markdown)
 
     _print_summary(
         output_path=output_path,
+        markdown_path=markdown_path,
         total_endpoints=metrics.total_endpoints,
         payloads_generated=metrics.payloads_generated,
         valid_payloads_generated=metrics.valid_payloads_generated,
@@ -533,6 +542,10 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
         failed_requests=metrics.failed_requests,
         findings_total=metrics.findings_total,
         dry_run=bool(args.dry_run),
+        findings=findings,
+        endpoints=api_schema.endpoints,
+        target_url=args.base_url,
+        preset=getattr(args, "preset", None),
     )
     print(
         "GraphQL discovery and payload generation succeeded. "
