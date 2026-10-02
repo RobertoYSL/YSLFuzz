@@ -47,7 +47,15 @@ class GraphQLVariableGenerator:
         variables: dict[str, Any] = {}
 
         for argument in operation.arguments:
-            value = self.generate_value(argument.type_ref, schema)
+            if (
+                self.config.default_pagination_limit is not None
+                and argument.name.lower()
+                in {"limit", "first", "pagesize", "page_size", "count", "take", "max", "top"}
+                and argument.type_ref.named_type() == "Int"
+            ):
+                value = self.config.default_pagination_limit
+            else:
+                value = self.generate_value(argument.type_ref, schema)
             if self.config.generate_variables:
                 variable_definitions.append(f"${argument.name}: {argument.type_ref.display()}")
                 argument_bindings.append(f"{argument.name}: ${argument.name}")

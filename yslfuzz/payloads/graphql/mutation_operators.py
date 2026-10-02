@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from yslfuzz.discovery.graphql.models import GraphQLEnum, GraphQLSchema, GraphQLTypeKind, GraphQLTypeRef
-from yslfuzz.models.base import is_sensitive_key
+from yslfuzz.models.base import is_sensitive_key, prefixed_id
 from yslfuzz.models.enums import PayloadKind
 from yslfuzz.models.payload import PayloadCandidate
 
@@ -69,6 +69,7 @@ class GraphQLMutationOperator:
         return payload.model_copy(
             deep=True,
             update={
+                "payload_id": prefixed_id("payload"),
                 "payload_kind": mutation.payload_kind,
                 "body": body,
                 "parent_payload_id": payload.payload_id,

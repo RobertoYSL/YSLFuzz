@@ -19,7 +19,9 @@ from yslfuzz.analysis.detectors import (
 )
 from yslfuzz.analysis.graphql.detectors import (
     GraphQLAuthorizationConsistencyDetector,
+    GraphQLBooleanSqlInjectionDetector,
     GraphQLErrorDisclosureDetector,
+    GraphQLFieldSuggestionDetector,
     GraphQLInjectionMarkerDetector,
     GraphQLIntrospectionExposureDetector,
     GraphQLMassAssignmentDetector,
@@ -49,6 +51,8 @@ DETECTOR_FLAGS: dict[str, str] = {
     GraphQLAuthorizationConsistencyDetector.name: "enable_graphql_authorization_consistency",
     GraphQLInjectionMarkerDetector.name: "enable_graphql_injection_marker_detection",
     GraphQLSSRFMarkerDetector.name: "enable_graphql_ssrf_marker_detection",
+    GraphQLFieldSuggestionDetector.name: "enable_graphql_field_suggestion_detection",
+    GraphQLBooleanSqlInjectionDetector.name: "enable_graphql_boolean_sqli_detection",
 }
 
 
@@ -75,6 +79,8 @@ def default_detectors(config: AnalysisConfig | None = None) -> list[ResponseDete
         GraphQLAuthorizationConsistencyDetector(analysis_config),
         GraphQLInjectionMarkerDetector(analysis_config),
         GraphQLSSRFMarkerDetector(analysis_config),
+        GraphQLFieldSuggestionDetector(analysis_config),
+        GraphQLBooleanSqlInjectionDetector(analysis_config),
     ]
 
 

@@ -90,6 +90,12 @@ class FindingEnricher:
             "endpoint_method": endpoint.method.value
             if endpoint is not None and endpoint.method is not None
             else None,
+            "graphql_operation_type": getattr(endpoint, "graphql_operation_type", None)
+            if endpoint is not None
+            else None,
+            "graphql_operation_name": getattr(endpoint, "graphql_operation_name", None)
+            if endpoint is not None
+            else None,
             "attack_category": finding.attack_category.value,
             "severity": finding.severity.value,
             "confidence": finding.confidence.value,

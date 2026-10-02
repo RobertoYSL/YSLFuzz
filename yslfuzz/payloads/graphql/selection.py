@@ -35,12 +35,18 @@ class GraphQLSelectionSetBuilder:
         path: frozenset[str],
     ) -> str | None:
         named_type = self._named_return_type(type_ref)
+        if not named_type:
+            return None
+        if self._is_union_or_interface(named_type, schema):
+            return "{ __typename }"
         object_type = self._object_type(named_type, schema)
         if object_type is None:
             return None
         if depth >= self.config.max_selection_depth or object_type.name in path:
             scalar_fields = self._scalar_fields(object_type, schema)
-            return self._format_selection([field.name for field in scalar_fields])
+            if scalar_fields:
+                return self._format_selection([field.name for field in scalar_fields])
+            return "{ __typename }"
 
         selected: list[str] = []
         if self.config.include_typename:
@@ -54,6 +60,9 @@ class GraphQLSelectionSetBuilder:
             if self._field_has_required_arguments(field):
                 continue
             child_type = self._named_return_type(field.type_ref)
+            if self._is_union_or_interface(child_type, schema):
+                selected.append(f"{field.name} {{ __typename }}")
+                continue
             child_object = self._object_type(child_type, schema)
             if child_object is None:
                 selected.append(field.name)
@@ -81,11 +90,20 @@ class GraphQLSelectionSetBuilder:
                 continue
             if self._field_has_required_arguments(field):
                 continue
-            if self._object_type(self._named_return_type(field.type_ref), schema) is None:
+            child_type = self._named_return_type(field.type_ref)
+            if (
+                self._object_type(child_type, schema) is None
+                and not self._is_union_or_interface(child_type, schema)
+            ):
                 fields.append(field)
             if len(fields) >= self.config.max_fields_per_selection:
                 break
         return fields
+
+    def _is_union_or_interface(self, name: str | None, schema: GraphQLSchema) -> bool:
+        if name is None:
+            return False
+        return any(u.name == name for u in schema.unions) or any(i.name == name for i in schema.interfaces)
 
     def _named_return_type(self, type_ref: GraphQLTypeRef) -> str | None:
         current = type_ref

@@ -1,0 +1,278 @@
+{
+  "lab_id": "owasp-crapi",
+  "lab_name": "OWASP crAPI Benchmark Lab",
+  "lab_version": "1.0.0",
+  "target_name": "crAPI",
+  "target_base_url": "http://127.0.0.1:8888",
+  "api_style": "REST",
+  "expected_endpoints": [
+    "/community/api/v2/community/posts",
+    "/community/api/v2/community/posts/recent",
+    "/community/api/v2/community/posts/{postId}",
+    "/community/api/v2/community/posts/{postId}/comment",
+    "/community/api/v2/coupon/new-coupon",
+    "/community/api/v2/coupon/validate-coupon",
+    "/identity/api/auth/forget-password",
+    "/identity/api/auth/login",
+    "/identity/api/auth/signup",
+    "/identity/api/auth/v2.7/user/login-with-token",
+    "/identity/api/auth/v2/check-otp",
+    "/identity/api/auth/v3/check-otp",
+    "/identity/api/auth/v4.0/user/login-with-token",
+    "/identity/api/v2/admin/videos/{video_id}",
+    "/identity/api/v2/user/change-email",
+    "/identity/api/v2/user/dashboard",
+    "/identity/api/v2/user/pictures",
+    "/identity/api/v2/user/reset-password",
+    "/identity/api/v2/user/verify-email-token",
+    "/identity/api/v2/user/videos",
+    "/identity/api/v2/user/videos/convert_video",
+    "/identity/api/v2/user/videos/{video_id}",
+    "/identity/api/v2/vehicle/add_vehicle",
+    "/identity/api/v2/vehicle/resend_email",
+    "/identity/api/v2/vehicle/vehicles",
+    "/identity/api/v2/vehicle/{vehicleId}/location",
+    "/workshop/api/management/users/all",
+    "/workshop/api/mechanic/",
+    "/workshop/api/mechanic/mechanic_report",
+    "/workshop/api/mechanic/receive_report",
+    "/workshop/api/mechanic/service_requests",
+    "/workshop/api/mechanic/signup",
+    "/workshop/api/merchant/contact_mechanic",
+    "/workshop/api/shop/apply_coupon",
+    "/workshop/api/shop/orders",
+    "/workshop/api/shop/orders/all",
+    "/workshop/api/shop/orders/return_order",
+    "/workshop/api/shop/orders/{order_id}",
+    "/workshop/api/shop/products",
+    "/workshop/api/shop/return_qr_code"
+  ],
+  "expected_vulnerabilities": [
+    {
+      "ground_truth_id": "gt_crapi_ch1_vehicle_location_bola",
+      "endpoint_path": "/identity/api/v2/vehicle/{vehicleId}/location",
+      "endpoint_method": "GET",
+      "attack_category": "BROKEN_ACCESS_CONTROL",
+      "vulnerability_type": "bola_unauthorized_vehicle_location_access",
+      "expected_severity": "HIGH",
+      "affected_parameter": "vehicleId",
+      "affected_location": "PATH",
+      "cwe": "CWE-639",
+      "owasp_api_category": "API1:2023 Broken Object Level Authorization",
+      "description": "Access details and GPS location of another user vehicle via vehicleId parameter tampering.",
+      "tags": [
+        "bola",
+        "idor",
+        "auth",
+        "owasp-api-1"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch2_mechanic_report_bola",
+      "endpoint_path": "/workshop/api/mechanic/mechanic_report",
+      "endpoint_method": "GET",
+      "attack_category": "BROKEN_ACCESS_CONTROL",
+      "vulnerability_type": "bola_unauthorized_mechanic_report_access",
+      "expected_severity": "HIGH",
+      "affected_parameter": "report_id",
+      "affected_location": "QUERY",
+      "cwe": "CWE-639",
+      "owasp_api_category": "API1:2023 Broken Object Level Authorization",
+      "description": "Access mechanic reports submitted by other users by tampering report_id.",
+      "tags": [
+        "bola",
+        "idor",
+        "auth",
+        "owasp-api-1"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch3_otp_brute_force",
+      "endpoint_path": "/identity/api/auth/v2/check-otp",
+      "endpoint_method": "POST",
+      "attack_category": "AUTH_BYPASS",
+      "vulnerability_type": "broken_authentication_otp_bypass",
+      "expected_severity": "HIGH",
+      "cwe": "CWE-307",
+      "owasp_api_category": "API2:2023 Broken Authentication",
+      "description": "Reset password of another user via OTP verification endpoint lacking rate limiting.",
+      "tags": [
+        "auth",
+        "brute-force",
+        "rate-limit",
+        "owasp-api-2"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch4_posts_recent_data_exposure",
+      "endpoint_path": "/community/api/v2/community/posts/recent",
+      "endpoint_method": "GET",
+      "attack_category": "INFORMATION_DISCLOSURE",
+      "vulnerability_type": "excessive_data_exposure_user_details",
+      "expected_severity": "MEDIUM",
+      "cwe": "CWE-200",
+      "owasp_api_category": "API3:2023 Broken Object Property Level Authorization",
+      "description": "Recent posts endpoint leaks sensitive user information including email and vehicleId.",
+      "tags": [
+        "data-exposure",
+        "privacy",
+        "owasp-api-3"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch5_video_internal_properties_exposure",
+      "endpoint_path": "/identity/api/v2/user/videos/{video_id}",
+      "endpoint_method": "GET",
+      "attack_category": "INFORMATION_DISCLOSURE",
+      "vulnerability_type": "excessive_data_exposure_video_internal_properties",
+      "expected_severity": "MEDIUM",
+      "cwe": "CWE-200",
+      "owasp_api_category": "API3:2023 Broken Object Property Level Authorization",
+      "description": "Video endpoint leaks internal conversion properties not meant for client exposure.",
+      "tags": [
+        "data-exposure",
+        "owasp-api-3"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch7_admin_video_deletion_bfla",
+      "endpoint_path": "/identity/api/v2/admin/videos/{video_id}",
+      "endpoint_method": "DELETE",
+      "attack_category": "BROKEN_ACCESS_CONTROL",
+      "vulnerability_type": "bfla_unauthorized_admin_video_deletion",
+      "expected_severity": "HIGH",
+      "cwe": "CWE-285",
+      "owasp_api_category": "API5:2023 Broken Function Level Authorization",
+      "description": "Regular user can invoke admin endpoint to delete video of another user.",
+      "tags": [
+        "bfla",
+        "access-control",
+        "owasp-api-5"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch8_shop_orders_negative_quantity",
+      "endpoint_path": "/workshop/api/shop/orders",
+      "endpoint_method": "POST",
+      "attack_category": "INPUT_VALIDATION",
+      "vulnerability_type": "negative_quantity_input_validation",
+      "expected_severity": "HIGH",
+      "affected_parameter": "quantity",
+      "affected_location": "BODY",
+      "cwe": "CWE-20",
+      "owasp_api_category": "API6:2023 Unrestricted Access to Sensitive Business Flows",
+      "description": "Order placement allows negative quantity to reduce or reverse payment amounts.",
+      "tags": [
+        "mass-assignment",
+        "business-logic",
+        "input-validation",
+        "owasp-api-6"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch10_video_property_mass_assignment",
+      "endpoint_path": "/identity/api/v2/user/videos/{video_id}",
+      "endpoint_method": "PUT",
+      "attack_category": "MASS_ASSIGNMENT",
+      "vulnerability_type": "mass_assignment_video_internal_properties",
+      "expected_severity": "MEDIUM",
+      "cwe": "CWE-915",
+      "owasp_api_category": "API3:2023 Broken Object Property Level Authorization",
+      "description": "Allows modifying internal video conversion properties via mass assignment.",
+      "tags": [
+        "mass-assignment",
+        "owasp-api-3"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch11_mechanic_receive_report_ssrf",
+      "endpoint_path": "/workshop/api/mechanic/receive_report",
+      "endpoint_method": "GET",
+      "attack_category": "SSRF",
+      "vulnerability_type": "ssrf_mechanic_receive_report",
+      "expected_severity": "HIGH",
+      "affected_parameter": "url",
+      "affected_location": "QUERY",
+      "cwe": "CWE-918",
+      "owasp_api_category": "API7:2023 Server Side Request Forgery",
+      "description": "Mechanic receive report endpoint fetches arbitrary external URLs.",
+      "tags": [
+        "ssrf",
+        "owasp-api-7"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch12_coupon_nosql_injection",
+      "endpoint_path": "/community/api/v2/coupon/validate-coupon",
+      "endpoint_method": "POST",
+      "attack_category": "NOSQL_INJECTION",
+      "vulnerability_type": "nosql_injection_coupon_validation",
+      "expected_severity": "HIGH",
+      "affected_parameter": "coupon_code",
+      "affected_location": "BODY",
+      "cwe": "CWE-943",
+      "owasp_api_category": "API8:2023 Security Misconfiguration",
+      "description": "Coupon validation is vulnerable to NoSQL operator injection in coupon_code.",
+      "tags": [
+        "nosql-injection",
+        "injection",
+        "owasp-api-8"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch13_shop_apply_coupon_sqli",
+      "endpoint_path": "/workshop/api/shop/apply_coupon",
+      "endpoint_method": "POST",
+      "attack_category": "SQL_INJECTION",
+      "vulnerability_type": "sql_injection_shop_apply_coupon",
+      "expected_severity": "HIGH",
+      "affected_parameter": "coupon_code",
+      "affected_location": "BODY",
+      "cwe": "CWE-89",
+      "owasp_api_category": "API8:2023 Security Misconfiguration",
+      "description": "Applying coupon in workshop shop executes vulnerable SQL query concatenating coupon_code.",
+      "tags": [
+        "sql-injection",
+        "injection",
+        "owasp-api-8"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch14_management_users_all_unauth",
+      "endpoint_path": "/workshop/api/management/users/all",
+      "endpoint_method": "GET",
+      "attack_category": "AUTH_BYPASS",
+      "vulnerability_type": "unauthenticated_management_users_access",
+      "expected_severity": "HIGH",
+      "cwe": "CWE-306",
+      "owasp_api_category": "API2:2023 Broken Authentication",
+      "description": "Management endpoint exposes user records without enforcing authentication.",
+      "tags": [
+        "unauthenticated",
+        "auth-bypass",
+        "owasp-api-2"
+      ]
+    },
+    {
+      "ground_truth_id": "gt_crapi_ch15_user_dashboard_jwt_bypass",
+      "endpoint_path": "/identity/api/v2/user/dashboard",
+      "endpoint_method": "GET",
+      "attack_category": "AUTH_BYPASS",
+      "vulnerability_type": "jwt_verification_bypass",
+      "expected_severity": "HIGH",
+      "cwe": "CWE-287",
+      "owasp_api_category": "API2:2023 Broken Authentication",
+      "description": "Dashboard fails to validate JWT signature or accepts forged tokens.",
+      "tags": [
+        "jwt",
+        "auth-bypass",
+        "owasp-api-2"
+      ]
+    }
+  ],
+  "notes": "Official OWASP crAPI benchmark evaluation ground-truth specification.",
+  "metadata": {
+    "source": "OWASP crAPI challenges",
+    "safe_for_local_tests": true
+  }
+}

@@ -10,6 +10,7 @@ from yslfuzz.discovery.graphql.models import (
     GraphQLEnum,
     GraphQLField,
     GraphQLInputObject,
+    GraphQLInterface,
     GraphQLOperation,
     GraphQLOperationType,
     GraphQLScalar,
@@ -17,6 +18,7 @@ from yslfuzz.discovery.graphql.models import (
     GraphQLType,
     GraphQLTypeKind,
     GraphQLTypeRef,
+    GraphQLUnion,
 )
 from yslfuzz.discovery.graphql.schema_loader import GraphQLSchemaLoadError, GraphQLSchemaLoader
 from yslfuzz.discovery.graphql.sdl_parser import GraphQLSDLParseError, GraphQLSDLParser
@@ -26,6 +28,7 @@ __all__ = [
     "GraphQLEnum",
     "GraphQLField",
     "GraphQLInputObject",
+    "GraphQLInterface",
     "GraphQLIntrospectionParseError",
     "GraphQLIntrospectionParser",
     "GraphQLOperation",
@@ -40,4 +43,5 @@ __all__ = [
     "GraphQLType",
     "GraphQLTypeKind",
     "GraphQLTypeRef",
+    "GraphQLUnion",
 ]

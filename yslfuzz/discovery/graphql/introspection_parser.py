@@ -10,6 +10,7 @@ from yslfuzz.discovery.graphql.models import (
     GraphQLEnum,
     GraphQLField,
     GraphQLInputObject,
+    GraphQLInterface,
     GraphQLOperation,
     GraphQLOperationType,
     GraphQLScalar,
@@ -17,6 +18,7 @@ from yslfuzz.discovery.graphql.models import (
     GraphQLType,
     GraphQLTypeKind,
     GraphQLTypeRef,
+    GraphQLUnion,
 )
 
 
@@ -40,6 +42,8 @@ class GraphQLIntrospectionParser:
         input_objects: list[GraphQLInputObject] = []
         enums: list[GraphQLEnum] = []
         scalars: list[GraphQLScalar] = []
+        unions: list[GraphQLUnion] = []
+        interfaces: list[GraphQLInterface] = []
 
         for item in types_raw:
             type_data = self._mapping(item, "__schema.types[]")
@@ -78,6 +82,45 @@ class GraphQLIntrospectionParser:
                         description=self._optional_string(type_data.get("description")),
                     )
                 )
+            elif kind == GraphQLTypeKind.UNION:
+                possible_types_raw = type_data.get("possibleTypes")
+                possible_types: list[GraphQLTypeRef] = []
+                if isinstance(possible_types_raw, Sequence):
+                    for pt in possible_types_raw:
+                        if isinstance(pt, Mapping):
+                            possible_types.append(
+                                GraphQLTypeRef(
+                                    kind=GraphQLTypeKind.OBJECT,
+                                    name=pt.get("name"),
+                                )
+                            )
+                unions.append(
+                    GraphQLUnion(
+                        name=name,
+                        possible_types=possible_types,
+                        description=self._optional_string(type_data.get("description")),
+                    )
+                )
+            elif kind == GraphQLTypeKind.INTERFACE:
+                possible_types_raw = type_data.get("possibleTypes")
+                possible_types_iface: list[GraphQLTypeRef] = []
+                if isinstance(possible_types_raw, Sequence):
+                    for pt in possible_types_raw:
+                        if isinstance(pt, Mapping):
+                            possible_types_iface.append(
+                                GraphQLTypeRef(
+                                    kind=GraphQLTypeKind.OBJECT,
+                                    name=pt.get("name"),
+                                )
+                            )
+                interfaces.append(
+                    GraphQLInterface(
+                        name=name,
+                        fields=self._fields(type_data.get("fields")),
+                        possible_types=possible_types_iface,
+                        description=self._optional_string(type_data.get("description")),
+                    )
+                )
 
         schema = GraphQLSchema(
             source_format="introspection_json",
@@ -88,6 +131,8 @@ class GraphQLIntrospectionParser:
             input_objects=input_objects,
             enums=enums,
             scalars=scalars,
+            unions=unions,
+            interfaces=interfaces,
         )
         schema.operations = self._extract_operations(schema)
         return schema

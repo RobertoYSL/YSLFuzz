@@ -1,0 +1,2 @@
+scan_run_id,lab_id,total_expected_vulnerabilities,total_findings,true_positives,false_positives,false_negatives,precision,recall,f1_score,endpoint_coverage,payload_validity_rate,total_requests,total_payloads_generated,total_payloads_executed
+scan_1d5f42b046bf4629bdcee2f9e796f9f5,owasp-crapi,13,343,4,339,9,0.011662,0.307692,0.022472,1.0,0.094828,476,464,464

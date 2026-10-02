@@ -250,6 +250,8 @@ class AnalysisConfigSection(ConfigModel):
     enable_graphql_authorization_consistency: bool = True
     enable_graphql_injection_marker_detection: bool = True
     enable_graphql_ssrf_marker_detection: bool = True
+    enable_graphql_field_suggestion_detection: bool = True
+    enable_graphql_boolean_sqli_detection: bool = True
 
 
 class ReportingConfigSection(ConfigModel):

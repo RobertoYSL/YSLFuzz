@@ -1,10 +1,12 @@
 from yslfuzz.discovery.graphql import (
     GraphQLArgument,
     GraphQLField,
+    GraphQLInterface,
     GraphQLSchema,
     GraphQLType,
     GraphQLTypeKind,
     GraphQLTypeRef,
+    GraphQLUnion,
 )
 from yslfuzz.payloads.graphql import GraphQLPayloadConfig, GraphQLSelectionSetBuilder
 
@@ -148,3 +150,75 @@ def test_selection_builder_skips_fields_with_required_arguments() -> None:
     )
 
     assert GraphQLSelectionSetBuilder().build(object_ref("User"), schema) == "{ email }"
+
+
+def test_selection_builder_handles_union_return_and_field() -> None:
+    schema = GraphQLSchema(
+        source_format="sdl",
+        unions=[
+            GraphQLUnion(
+                name="SearchResult",
+                possible_types=[object_ref("User"), object_ref("Post")],
+            )
+        ],
+        object_types=[
+            GraphQLType(
+                name="Query",
+                fields=[
+                    GraphQLField(
+                        name="search",
+                        type_ref=GraphQLTypeRef(kind=GraphQLTypeKind.UNION, name="SearchResult"),
+                    ),
+                ],
+            )
+        ],
+    )
+
+    # Union return type directly
+    assert (
+        GraphQLSelectionSetBuilder().build(
+            GraphQLTypeRef(kind=GraphQLTypeKind.UNION, name="SearchResult"),
+            schema,
+        )
+        == "{ __typename }"
+    )
+
+    # Union field in object
+    assert GraphQLSelectionSetBuilder().build(object_ref("Query"), schema) == "{ search { __typename } }"
+
+
+def test_selection_builder_handles_interface_return_and_field() -> None:
+    schema = GraphQLSchema(
+        source_format="sdl",
+        interfaces=[
+            GraphQLInterface(
+                name="Node",
+                fields=[GraphQLField(name="id", type_ref=scalar_ref("ID"))],
+            )
+        ],
+        object_types=[
+            GraphQLType(
+                name="Query",
+                fields=[
+                    GraphQLField(
+                        name="node",
+                        type_ref=GraphQLTypeRef(kind=GraphQLTypeKind.INTERFACE, name="Node"),
+                    ),
+                ],
+            )
+        ],
+    )
+
+    # Interface return type directly
+    assert (
+        GraphQLSelectionSetBuilder().build(
+            GraphQLTypeRef(kind=GraphQLTypeKind.INTERFACE, name="Node"),
+            schema,
+        )
+        == "{ __typename }"
+    )
+
+    # Interface field in object
+    assert GraphQLSelectionSetBuilder().build(object_ref("Query"), schema) == "{ node { __typename } }"
+
+

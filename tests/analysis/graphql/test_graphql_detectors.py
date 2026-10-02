@@ -1,6 +1,8 @@
 from yslfuzz.analysis.graphql import (
     GraphQLAuthorizationConsistencyDetector,
+    GraphQLBooleanSqlInjectionDetector,
     GraphQLErrorDisclosureDetector,
+    GraphQLFieldSuggestionDetector,
     GraphQLInjectionMarkerDetector,
     GraphQLIntrospectionExposureDetector,
     GraphQLMassAssignmentDetector,
@@ -202,6 +204,93 @@ def test_graphql_ssrf_marker_detector_uses_safe_invalid_domain_marker() -> None:
     serialized = results[0].model_dump_json().lower()
     assert "localhost" not in serialized
     assert "169.254.169.254" not in serialized
+
+
+def test_graphql_field_suggestion_detector_detects_did_you_mean() -> None:
+    detector = GraphQLFieldSuggestionDetector()
+    results = detector.detect(
+        _request("baseline"),
+        _response("baseline", 200, '{"data":{"user":null}}'),
+        _request("attack"),
+        _response(
+            "attack",
+            400,
+            '{"errors":[{"message":"Cannot query field \\"pastesz\\" on type \\"Query\\". Did you mean \\"pastes\\" or \\"paste\\"?"}]}',
+        ),
+        _payload(PayloadKind.ATTACK, AttackCategory.INFORMATION_DISCLOSURE),
+    )
+    assert results
+    assert results[0].metadata["attack_category"] == AttackCategory.INFORMATION_DISCLOSURE.value
+    assert "Did you mean" in results[0].evidence[0].observed_value_preview
+
+
+def test_graphql_field_suggestion_detector_baseline() -> None:
+    detector = GraphQLFieldSuggestionDetector()
+    results = detector.detect_baseline(
+        _request("baseline"),
+        _response(
+            "baseline",
+            400,
+            '{"errors":[{"message":"Cannot query field \\"foo\\". Did you mean \\"bar\\"?"}]}',
+        ),
+    )
+    assert results
+    assert results[0].metadata.get("graphql_title") == "GraphQL Field Suggestions Information Disclosure"
+
+
+def test_graphql_boolean_sqli_detector_detects_count_expansion() -> None:
+    detector = GraphQLBooleanSqlInjectionDetector()
+    payload = _payload(
+        PayloadKind.ATTACK,
+        AttackCategory.SQL_INJECTION,
+        metadata={"inert_marker": "yslfuzz_sqli_probe' OR 'yslfuzz_probe'='yslfuzz_probe"},
+    )
+    payload.body = {
+        "query": "query { pastes(filter: \"yslfuzz_sqli_probe' OR 'yslfuzz_probe'='yslfuzz_probe\") { id } }"
+    }
+
+    baseline_resp = _response("baseline", 200, '{"data":{"pastes":[]}}')
+    attack_resp = _response(
+        "attack",
+        200,
+        '{"data":{"pastes":[{"id":"1"},{"id":"2"},{"id":"3"}]}}',
+    )
+
+    results = detector.detect(
+        _request("baseline"),
+        baseline_resp,
+        _request("attack"),
+        attack_resp,
+        payload,
+    )
+    assert results
+    assert results[0].severity == FindingSeverity.HIGH
+    assert results[0].metadata["attack_category"] == AttackCategory.SQL_INJECTION.value
+    assert "baseline_count=0" in results[0].evidence[0].observed_value_preview
+
+
+def test_graphql_boolean_sqli_detector_ignores_when_no_count_expansion() -> None:
+    detector = GraphQLBooleanSqlInjectionDetector()
+    payload = _payload(
+        PayloadKind.ATTACK,
+        AttackCategory.SQL_INJECTION,
+        metadata={"inert_marker": "yslfuzz_sqli_probe' OR 'yslfuzz_probe'='yslfuzz_probe"},
+    )
+    payload.body = {
+        "query": "query { pastes(filter: \"yslfuzz_sqli_probe' OR 'yslfuzz_probe'='yslfuzz_probe\") { id } }"
+    }
+
+    baseline_resp = _response("baseline", 200, '{"data":{"pastes":[{"id":"1"}]}}')
+    attack_resp = _response("attack", 200, '{"data":{"pastes":[{"id":"1"}]}}')
+
+    results = detector.detect(
+        _request("baseline"),
+        baseline_resp,
+        _request("attack"),
+        attack_resp,
+        payload,
+    )
+    assert results == []
 
 
 def _request(prefix: str, *, metadata: dict[str, object] | None = None) -> RequestRecord:

@@ -166,6 +166,8 @@ class ReportSummaryBuilder:
                 "endpoint_id": endpoint.endpoint_id,
                 "method": endpoint.method.value if endpoint.method is not None else None,
                 "path": endpoint.path,
+                "graphql_operation_type": getattr(endpoint, "graphql_operation_type", None),
+                "graphql_operation_name": getattr(endpoint, "graphql_operation_name", None),
                 "tested": request_count_by_endpoint.get(endpoint.endpoint_id, 0) > 0,
                 "request_count": request_count_by_endpoint.get(endpoint.endpoint_id, 0),
                 "finding_count": len(findings_by_endpoint.get(endpoint.endpoint_id, [])),

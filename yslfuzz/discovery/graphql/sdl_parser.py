@@ -16,6 +16,7 @@ from yslfuzz.discovery.graphql.models import (
     GraphQLType,
     GraphQLTypeKind,
     GraphQLTypeRef,
+    GraphQLUnion,
 )
 
 
@@ -30,6 +31,10 @@ class GraphQLSDLParser:
         r"\b(?P<kind>type|input|enum)\s+(?P<name>[_A-Za-z][_0-9A-Za-z]*)[^{]*"
         r"\{(?P<body>.*?)\}",
         re.DOTALL,
+    )
+    _schema_pattern = re.compile(r"\bschema\s*\{(?P<body>.*?)\}", re.DOTALL)
+    _union_pattern = re.compile(
+        r"\bunion\s+(?P<name>[_A-Za-z][_0-9A-Za-z]*)\s*=\s*(?P<members>[_A-Za-z0-9\s|]+)"
     )
     _scalar_pattern = re.compile(r"\bscalar\s+(?P<name>[_A-Za-z][_0-9A-Za-z]*)\b")
     _field_pattern = re.compile(
@@ -74,12 +79,67 @@ class GraphQLSDLParser:
         if not object_types and not input_objects and not enums and not scalar_names:
             raise GraphQLSDLParseError("No supported GraphQL SDL definitions were found")
 
+        query_type_name: str | None = None
+        mutation_type_name: str | None = None
+        subscription_type_name: str | None = None
+
+        schema_match = self._schema_pattern.search(cleaned)
+        if schema_match:
+            s_body = schema_match.group("body")
+            q_match = re.search(r"\bquery\s*:\s*([_A-Za-z][_0-9A-Za-z]*)", s_body)
+            if q_match:
+                query_type_name = q_match.group(1)
+            m_match = re.search(r"\bmutation\s*:\s*([_A-Za-z][_0-9A-Za-z]*)", s_body)
+            if m_match:
+                mutation_type_name = m_match.group(1)
+            sub_match = re.search(r"\bsubscription\s*:\s*([_A-Za-z][_0-9A-Za-z]*)", s_body)
+            if sub_match:
+                subscription_type_name = sub_match.group(1)
+
+        type_names = {t.name for t in object_types}
+        if query_type_name is None:
+            if "Query" in type_names:
+                query_type_name = "Query"
+            elif "Queries" in type_names:
+                query_type_name = "Queries"
+            elif "RootQuery" in type_names:
+                query_type_name = "RootQuery"
+
+        if mutation_type_name is None:
+            if "Mutation" in type_names:
+                mutation_type_name = "Mutation"
+            elif "Mutations" in type_names:
+                mutation_type_name = "Mutations"
+            elif "RootMutation" in type_names:
+                mutation_type_name = "RootMutation"
+
+        if subscription_type_name is None:
+            if "Subscription" in type_names:
+                subscription_type_name = "Subscription"
+            elif "Subscriptions" in type_names:
+                subscription_type_name = "Subscriptions"
+
+        unions: list[GraphQLUnion] = []
+        for match in self._union_pattern.finditer(cleaned):
+            uname = match.group("name")
+            members_raw = match.group("members")
+            member_names = [m.strip() for m in members_raw.split("|") if m.strip()]
+            possible_types = [
+                GraphQLTypeRef(kind=GraphQLTypeKind.OBJECT, name=mname)
+                for mname in member_names
+            ]
+            unions.append(GraphQLUnion(name=uname, possible_types=possible_types))
+
         schema = GraphQLSchema(
             source_format="sdl",
+            query_type_name=query_type_name,
+            mutation_type_name=mutation_type_name,
+            subscription_type_name=subscription_type_name,
             object_types=object_types,
             input_objects=input_objects,
             enums=enums,
             scalars=scalars,
+            unions=unions,
         )
         schema.operations = self._extract_operations(schema)
         return schema

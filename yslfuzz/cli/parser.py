@@ -254,6 +254,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include a bounded safe GraphQL introspection probe when attack payloads are enabled",
     )
     scan_parser.add_argument(
+        "--graphql-pagination-limit",
+        type=int,
+        default=50,
+        help="Default integer value for pagination arguments (e.g. limit, first, pageSize)",
+    )
+    scan_parser.add_argument(
         "--rate-limit-rps",
         type=float,
         default=None,

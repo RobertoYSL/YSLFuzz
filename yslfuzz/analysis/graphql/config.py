@@ -17,6 +17,8 @@ class GraphQLAnalysisConfig(YSLFuzzModel):
     enable_graphql_authorization_consistency: bool = True
     enable_graphql_injection_marker_detection: bool = True
     enable_graphql_ssrf_marker_detection: bool = True
+    enable_graphql_field_suggestion_detection: bool = True
+    enable_graphql_boolean_sqli_detection: bool = True
     minimum_confidence: FindingConfidence | None = None
     include_info_findings: bool = True
     max_error_messages_to_analyze: int = 10
@@ -61,6 +63,12 @@ class GraphQLAnalysisConfig(YSLFuzzModel):
                 self.enable_graphql_injection_marker_detection
             ),
             "enable_graphql_ssrf_marker_detection": self.enable_graphql_ssrf_marker_detection,
+            "enable_graphql_field_suggestion_detection": (
+                self.enable_graphql_field_suggestion_detection
+            ),
+            "enable_graphql_boolean_sqli_detection": (
+                self.enable_graphql_boolean_sqli_detection
+            ),
             "minimum_confidence": (
                 self.minimum_confidence.value if self.minimum_confidence is not None else None
             ),

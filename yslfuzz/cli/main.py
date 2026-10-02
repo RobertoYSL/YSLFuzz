@@ -142,6 +142,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args._provided_options = _provided_options(raw_argv)
     if args.command == "scan" and args.config is None:
         schema_supplied = args.openapi is not None or args.graphql_schema is not None
+        if not args.base_url and args.graphql_schema and str(args.graphql_schema).startswith(("http://", "https://")):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(str(args.graphql_schema))
+            args.base_url = f"{parsed.scheme}://{parsed.netloc}"
+            if parsed.path and getattr(args, "graphql_endpoint", None) in (None, "/graphql"):
+                args.graphql_endpoint = parsed.path
         missing = [
             option
             for option, value in (

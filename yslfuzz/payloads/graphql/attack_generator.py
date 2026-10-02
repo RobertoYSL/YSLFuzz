@@ -76,32 +76,53 @@ class GraphQLAttackPayloadGenerator:
             mass_assignment = self._mass_assignment_probe(payload)
             if mass_assignment is not None:
                 generated.append(mass_assignment)
-        for category, marker, operator, label in (
+        if (
+            getattr(self.config, "allow_field_suggestion_probe", True)
+            and self._category_enabled(AttackCategory.INFORMATION_DISCLOSURE)
+        ):
+            suggestion_probe = self._field_suggestion_probe(payload, operation)
+            if suggestion_probe is not None:
+                generated.append(suggestion_probe)
+        categories_and_markers: list[tuple[AttackCategory, str, str, str]] = [
             (
                 AttackCategory.SQL_INJECTION,
                 self.config.inert_sql_marker,
                 "attack_sql_inert_marker",
                 "inert_sql_marker_probe",
             ),
-            (
-                AttackCategory.NOSQL_INJECTION,
-                self.config.inert_nosql_marker,
-                "attack_nosql_inert_marker",
-                "inert_nosql_marker_probe",
-            ),
-            (
-                AttackCategory.COMMAND_INJECTION,
-                self.config.inert_command_marker,
-                "attack_command_inert_marker",
-                "inert_command_marker_probe",
-            ),
-            (
-                AttackCategory.SSRF,
-                self.config.inert_ssrf_marker,
-                "attack_ssrf_inert_marker",
-                "inert_ssrf_marker_probe",
-            ),
-        ):
+        ]
+        if getattr(self.config, "allow_sql_boolean_probe", False):
+            categories_and_markers.append(
+                (
+                    AttackCategory.SQL_INJECTION,
+                    self.config.inert_sql_boolean_marker,
+                    "attack_sql_boolean_probe",
+                    "inert_sql_boolean_probe",
+                )
+            )
+        categories_and_markers.extend(
+            [
+                (
+                    AttackCategory.NOSQL_INJECTION,
+                    self.config.inert_nosql_marker,
+                    "attack_nosql_inert_marker",
+                    "inert_nosql_marker_probe",
+                ),
+                (
+                    AttackCategory.COMMAND_INJECTION,
+                    self.config.inert_command_marker,
+                    "attack_command_inert_marker",
+                    "inert_command_marker_probe",
+                ),
+                (
+                    AttackCategory.SSRF,
+                    self.config.inert_ssrf_marker,
+                    "attack_ssrf_inert_marker",
+                    "inert_ssrf_marker_probe",
+                ),
+            ]
+        )
+        for category, marker, operator, label in categories_and_markers:
             if self._category_enabled(category):
                 marker_probe = self._variable_probe(
                     payload,
@@ -160,6 +181,30 @@ class GraphQLAttackPayloadGenerator:
             target_path="query",
             safety_label="inert_error_leakage_probe",
             inert_marker="yslfuzz_unknown_field",
+        )
+
+    def _field_suggestion_probe(
+        self,
+        payload: PayloadCandidate,
+        operation: GraphQLOperation | None,
+    ) -> PayloadCandidate | None:
+        if operation is None or not operation.name:
+            return None
+        typo_name = f"{operation.name}z"
+        body = {
+            "query": f"query YSLFuzzFieldSuggestion {{ {typo_name} }}",
+            "variables": {},
+            "operationName": "YSLFuzzFieldSuggestion",
+        }
+        return self._attack_payload(
+            payload,
+            body,
+            AttackCategory.INFORMATION_DISCLOSURE,
+            operator="attack_field_suggestion_probe",
+            target_variable=None,
+            target_path="query",
+            safety_label="inert_field_suggestion_probe",
+            inert_marker=typo_name,
         )
 
     def _mass_assignment_probe(self, payload: PayloadCandidate) -> PayloadCandidate | None:

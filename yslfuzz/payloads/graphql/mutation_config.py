@@ -16,7 +16,7 @@ class GraphQLMutationConfig(YSLFuzzModel):
     enabled_attack_categories: list[AttackCategory] | None = None
     max_mutations_per_payload: int = 10
     max_mutations_per_variable: int = 3
-    max_attack_payloads_per_operation: int = 3
+    max_attack_payloads_per_operation: int = 10
     include_sensitive_fields: bool = False
     allow_invalid_enum_values: bool = False
     allow_type_confusion: bool = True
@@ -25,6 +25,8 @@ class GraphQLMutationConfig(YSLFuzzModel):
     allow_missing_required_fields: bool = True
     allow_introspection_probe: bool = False
     allow_error_leakage_probe: bool = True
+    allow_field_suggestion_probe: bool = True
+    allow_sql_boolean_probe: bool = False
     allow_reflection_probe: bool = True
     deterministic: bool = True
     random_seed: int | None = None
@@ -33,6 +35,7 @@ class GraphQLMutationConfig(YSLFuzzModel):
     inert_extra_field_name: str = "yslfuzz_extra_field"
     inert_extra_field_value: str = "yslfuzz_extra_value"
     inert_sql_marker: str = "yslfuzz_graphql_sql_marker"
+    inert_sql_boolean_marker: str = "yslfuzz_sqli_probe' OR 'yslfuzz_probe'='yslfuzz_probe"
     inert_nosql_marker: str = "yslfuzz_graphql_nosql_marker"
     inert_command_marker: str = "yslfuzz_graphql_command_marker"
     inert_ssrf_marker: str = "https://yslfuzz-ssrf-marker.invalid/resource"

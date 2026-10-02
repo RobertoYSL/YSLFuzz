@@ -96,10 +96,13 @@ class MarkdownReporter:
         for endpoint in endpoints:
             if not isinstance(endpoint, dict):
                 continue
+            op_str = ""
+            if endpoint.get("graphql_operation_type") and endpoint.get("graphql_operation_name"):
+                op_str = f" ({endpoint.get('graphql_operation_type')}: {endpoint.get('graphql_operation_name')})"
             lines.append(
                 "| "
                 f"{endpoint.get('method') or ''} | "
-                f"{endpoint.get('path') or ''} | "
+                f"{endpoint.get('path') or ''}{op_str} | "
                 f"{endpoint.get('tested')} | "
                 f"{endpoint.get('request_count', 0)} | "
                 f"{endpoint.get('finding_count', 0)} | "
@@ -114,6 +117,9 @@ class MarkdownReporter:
         for finding in findings:
             if not isinstance(finding, dict):
                 continue
+            op_str = ""
+            if finding.get("graphql_operation_type") and finding.get("graphql_operation_name"):
+                op_str = f" ({finding.get('graphql_operation_type')}: {finding.get('graphql_operation_name')})"
             lines.extend(
                 [
                     f"### {finding.get('title')}",
@@ -121,7 +127,7 @@ class MarkdownReporter:
                     f"- Severity: `{finding.get('severity')}`",
                     f"- Confidence: `{finding.get('confidence')}`",
                     f"- Endpoint: `{finding.get('endpoint_method') or ''} "
-                    f"{finding.get('endpoint_path') or finding.get('endpoint_id')}`",
+                    f"{finding.get('endpoint_path') or finding.get('endpoint_id')}{op_str}`",
                     f"- Attack category: `{finding.get('attack_category')}`",
                     f"- Detector: `{finding.get('detector_name')}`",
                     f"- Requests: `{', '.join(finding.get('request_ids', []))}`",

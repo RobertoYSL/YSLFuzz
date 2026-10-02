@@ -67,3 +67,39 @@ def test_graphql_introspection_probe_disabled_by_default_and_explicit_when_enabl
 
     assert "__schema" not in str([payload.body for payload in default_generated])
     assert "__schema" in str([payload.body for payload in enabled_generated])
+
+
+def test_graphql_field_suggestion_probe_generated_when_enabled() -> None:
+    schema, payloads = _schema_and_payloads()
+    generated = GraphQLAttackPayloadGenerator(
+        GraphQLMutationConfig(
+            include_attack_payloads=True,
+            allow_field_suggestion_probe=True,
+            max_attack_payloads_per_operation=10,
+        ),
+    ).generate(schema, payloads)
+
+    operators = [p.metadata.get("graphql_mutation_operator") for p in generated]
+    assert "attack_field_suggestion_probe" in operators
+
+
+def test_graphql_boolean_sql_probe_generated_when_enabled() -> None:
+    schema, payloads = _schema_and_payloads()
+    disabled = GraphQLAttackPayloadGenerator(
+        GraphQLMutationConfig(
+            include_attack_payloads=True,
+            allow_sql_boolean_probe=False,
+            max_attack_payloads_per_operation=10,
+        ),
+    ).generate(schema, payloads)
+    enabled = GraphQLAttackPayloadGenerator(
+        GraphQLMutationConfig(
+            include_attack_payloads=True,
+            allow_sql_boolean_probe=True,
+            max_attack_payloads_per_operation=10,
+        ),
+    ).generate(schema, payloads)
+
+    assert not any(p.metadata.get("graphql_mutation_operator") == "attack_sql_boolean_probe" for p in disabled)
+    assert any(p.metadata.get("graphql_mutation_operator") == "attack_sql_boolean_probe" for p in enabled)
+

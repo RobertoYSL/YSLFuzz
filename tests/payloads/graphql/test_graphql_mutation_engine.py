@@ -16,6 +16,7 @@ def test_graphql_mutation_engine_preserves_lineage_and_metadata() -> None:
     ).mutate(schema, payloads)
 
     assert generated
+    assert generated[0].payload_id != payloads[0].payload_id
     assert generated[0].parent_payload_id == payloads[0].payload_id
     assert generated[0].payload_kind == PayloadKind.BOUNDARY
     assert generated[0].metadata["api_style"] == "GRAPHQL"

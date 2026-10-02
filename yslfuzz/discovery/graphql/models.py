@@ -25,6 +25,8 @@ class GraphQLTypeKind(StrEnum):
     SCALAR = "SCALAR"
     LIST = "LIST"
     NON_NULL = "NON_NULL"
+    UNION = "UNION"
+    INTERFACE = "INTERFACE"
 
 
 class GraphQLTypeRef(YSLFuzzModel):
@@ -108,6 +110,25 @@ class GraphQLScalar(YSLFuzzModel):
     description: str | None = None
 
 
+class GraphQLUnion(YSLFuzzModel):
+    """Discovered GraphQL union type."""
+
+    name: str
+    kind: GraphQLTypeKind = GraphQLTypeKind.UNION
+    possible_types: list[GraphQLTypeRef] = Field(default_factory=list)
+    description: str | None = None
+
+
+class GraphQLInterface(YSLFuzzModel):
+    """Discovered GraphQL interface type."""
+
+    name: str
+    kind: GraphQLTypeKind = GraphQLTypeKind.INTERFACE
+    fields: list[GraphQLField] = Field(default_factory=list)
+    possible_types: list[GraphQLTypeRef] = Field(default_factory=list)
+    description: str | None = None
+
+
 class GraphQLOperation(YSLFuzzModel):
     """GraphQL root operation discovered from Query, Mutation, or Subscription."""
 
@@ -131,6 +152,8 @@ class GraphQLSchema(YSLFuzzModel):
     input_objects: list[GraphQLInputObject] = Field(default_factory=list)
     enums: list[GraphQLEnum] = Field(default_factory=list)
     scalars: list[GraphQLScalar] = Field(default_factory=list)
+    unions: list[GraphQLUnion] = Field(default_factory=list)
+    interfaces: list[GraphQLInterface] = Field(default_factory=list)
     operations: list[GraphQLOperation] = Field(default_factory=list)
 
     def operation_counts(self) -> dict[str, int]:
@@ -157,6 +180,8 @@ class GraphQLSchema(YSLFuzzModel):
             "input_object_count": len(self.input_objects),
             "enum_count": len(self.enums),
             "scalar_count": len(self.scalars),
+            "union_count": len(self.unions),
+            "interface_count": len(self.interfaces),
         }
 
     def discovery_summary(self) -> dict[str, Any]:

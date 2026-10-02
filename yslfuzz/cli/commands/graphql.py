@@ -71,6 +71,7 @@ def _graphql_payload_config_from_args(args: argparse.Namespace) -> GraphQLPayloa
         max_operations=args.graphql_max_operations,
         max_selection_depth=args.graphql_max_selection_depth,
         max_fields_per_selection=args.graphql_max_fields_per_selection,
+        default_pagination_limit=int(getattr(args, "graphql_pagination_limit", 50) or 50),
         deterministic=True,
         random_seed=0,
     )
@@ -114,6 +115,13 @@ def _graphql_mutation_config_from_args(
             or getattr(args, "graphql_include_introspection_probe", False)
         ),
         allow_error_leakage_probe=bool(getattr(args, "allow_error_leakage_probe", True)),
+        allow_field_suggestion_probe=bool(getattr(args, "allow_field_suggestion_probe", True)),
+        allow_sql_boolean_probe=bool(
+            getattr(args, "allow_sql_boolean_probe", False)
+            or getattr(args, "enable_graphql_boolean_sqli", False)
+            or getattr(args, "preset", None) in ("deep", "full")
+            or bool(args.execute_attacks)
+        ),
         allow_reflection_probe=bool(getattr(args, "allow_reflection_probe", True)),
         deterministic=True,
         random_seed=0,
@@ -165,7 +173,7 @@ def _analyze_graphql_execution(
             baseline_records.append((request, response))
         else:
             test_records.append((request, response, payload))
-    if not baseline_records or not test_records:
+    if not baseline_records and not test_records:
         return [], []
     return analysis_engine.analyze_records(
         baseline_records,
@@ -359,9 +367,21 @@ def _align_graphql_payload_endpoint_ids(
 
 
 def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
-    graphql_schema_path = Path(args.graphql_schema)
-    if not graphql_schema_path.is_file():
-        raise FileNotFoundError(f"GraphQL schema file does not exist: {graphql_schema_path}")
+    graphql_schema_source: str | Path
+    if str(args.graphql_schema).startswith(("http://", "https://")):
+        graphql_schema_source = str(args.graphql_schema)
+        if not getattr(args, "base_url", None):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(graphql_schema_source)
+            args.base_url = f"{parsed.scheme}://{parsed.netloc}"
+            if parsed.path and getattr(args, "graphql_endpoint", None) in (None, "/graphql"):
+                args.graphql_endpoint = parsed.path
+    else:
+        local_path = Path(args.graphql_schema)
+        if not local_path.is_file():
+            raise FileNotFoundError(f"GraphQL schema file does not exist: {local_path}")
+        graphql_schema_source = local_path
     if args.max_requests is not None and args.max_requests < 0:
         raise ValueError("--max-requests must be greater than or equal to 0")
     if args.timeout <= 0:
@@ -386,7 +406,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     graphql_mutation_config = _graphql_mutation_config_from_args(args, attack_categories)
 
     loader = GraphQLSchemaLoader()
-    graphql_schema = loader.load(graphql_schema_path)
+    graphql_schema = loader.load(graphql_schema_source)
     api_schema = GraphQLToApiSchemaMapper().map(graphql_schema, base_url=args.base_url)
     valid_payloads = GraphQLPayloadGenerator(graphql_payload_config).generate(graphql_schema)
     mutation_payloads = GraphQLMutationEngine(graphql_mutation_config).mutate(
@@ -444,6 +464,7 @@ def _run_graphql_discovery_command(args: argparse.Namespace) -> int:
     analysis_engine = AnalysisEngine(
         config=analysis_config,
         finding_builder=FindingBuilder(deduplicate=not bool(args.no_deduplicate_findings)),
+        endpoints=api_schema.endpoints,
     )
     detector_results, findings = _analyze_graphql_execution(
         analysis_engine=analysis_engine,

@@ -132,6 +132,8 @@ def _apply_preset(args: argparse.Namespace) -> None:
         if "--enable-bola-check" not in provided:
             if bool(getattr(args, "auth_user2_bearer_env", None)):
                 args.enable_bola_check = True
+        if "--max-attack-requests-per-endpoint" not in provided:
+            args.max_attack_requests_per_endpoint = 15
 
 
 def _confirm_dangerous_execution(
@@ -658,6 +660,12 @@ def _args_from_scan_config(
         config.analysis.enable_graphql_injection_marker_detection
     )
     effective.enable_graphql_ssrf_marker_detection = config.analysis.enable_graphql_ssrf_marker_detection
+    effective.enable_graphql_field_suggestion_detection = (
+        config.analysis.enable_graphql_field_suggestion_detection
+    )
+    effective.enable_graphql_boolean_sqli_detection = (
+        config.analysis.enable_graphql_boolean_sqli_detection
+    )
     effective.auth_bearer_env = config.auth.bearer_env
     effective.auth_api_key_env = config.auth.api_key_env
     effective.auth_api_key_header = config.auth.api_key_header
@@ -932,6 +940,12 @@ def _analysis_config_from_args(args: argparse.Namespace) -> AnalysisConfig:
         ),
         enable_graphql_ssrf_marker_detection=bool(
             getattr(args, "enable_graphql_ssrf_marker_detection", True)
+        ),
+        enable_graphql_field_suggestion_detection=bool(
+            getattr(args, "enable_graphql_field_suggestion_detection", True)
+        ),
+        enable_graphql_boolean_sqli_detection=bool(
+            getattr(args, "enable_graphql_boolean_sqli_detection", True)
         ),
     )
 
@@ -1232,7 +1246,12 @@ def _print_summary(
                 m = getattr(ep, "method", None)
                 m_str = (m.value if hasattr(m, "value") else str(m)) if m else ""
                 p_str = getattr(ep, "path", "")
-                endpoint_map[ep_id] = f"{m_str} {p_str}".strip()
+                op_type = getattr(ep, "graphql_operation_type", None)
+                op_name = getattr(ep, "graphql_operation_name", None)
+                if op_type and op_name:
+                    endpoint_map[ep_id] = f"{m_str} {p_str} ({op_type}: {op_name})".strip()
+                else:
+                    endpoint_map[ep_id] = f"{m_str} {p_str}".strip()
 
         ep_findings: dict[str, list[Any]] = {}
         for f in findings:

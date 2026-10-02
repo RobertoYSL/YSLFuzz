@@ -4,6 +4,8 @@ from yslfuzz.analysis.graphql.config import GraphQLAnalysisConfig
 from yslfuzz.analysis.graphql.detectors import (
     GraphQLAuthorizationConsistencyDetector,
     GraphQLErrorDisclosureDetector,
+    GraphQLBooleanSqlInjectionDetector,
+    GraphQLFieldSuggestionDetector,
     GraphQLInjectionMarkerDetector,
     GraphQLIntrospectionExposureDetector,
     GraphQLMassAssignmentDetector,
@@ -19,7 +21,9 @@ __all__ = [
     "GraphQLAnalysisConfig",
     "GraphQLAnalysisEngine",
     "GraphQLAuthorizationConsistencyDetector",
+    "GraphQLBooleanSqlInjectionDetector",
     "GraphQLErrorDisclosureDetector",
+    "GraphQLFieldSuggestionDetector",
     "GraphQLInjectionMarkerDetector",
     "GraphQLIntrospectionExposureDetector",
     "GraphQLMassAssignmentDetector",

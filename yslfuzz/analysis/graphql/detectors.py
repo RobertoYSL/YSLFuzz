@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -667,6 +668,193 @@ class GraphQLSSRFMarkerDetector(GraphQLResponseDetector):
         ]
 
 
+class GraphQLFieldSuggestionDetector(GraphQLResponseDetector):
+    """Detect information disclosure in GraphQL field suggestions ('Did you mean...')."""
+
+    detector_id = "detector_graphql_field_suggestion"
+    name = "GraphQLFieldSuggestionDetector"
+
+    def detect_baseline(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+    ) -> list[DetectorResult]:
+        if not self.graphql_config.enable_graphql_field_suggestion_detection:
+            return []
+        payload = PayloadCandidate(
+            endpoint_id=baseline_request.endpoint_id,
+            payload_kind=PayloadKind.VALID,
+            content_type="application/json",
+            body={},
+            generation_strategy="baseline",
+            seed=0,
+            metadata={"api_style": "graphql"},
+        )
+        return self._detect_suggestions(baseline_request, baseline_response, payload)
+
+    def detect(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        attack_request: RequestRecord,
+        attack_response: ResponseRecord,
+        attack_payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        del baseline_request, baseline_response
+        if not self.graphql_config.enable_graphql_field_suggestion_detection:
+            return []
+        if not self._is_graphql_record(attack_request, attack_payload):
+            return []
+        return self._detect_suggestions(attack_request, attack_response, attack_payload)
+
+    def _detect_suggestions(
+        self,
+        request: RequestRecord,
+        response: ResponseRecord,
+        payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        body = self._json_body(response)
+        error_texts = self._graphql_error_texts(body)
+        if not error_texts and response.body_preview:
+            error_texts = [response.body_preview]
+
+        matched_suggestions: list[str] = []
+        for text in error_texts:
+            match = re.search(r'did you mean\s+([^\n?]+)\??', text, re.IGNORECASE)
+            if match:
+                matched_suggestions.append(match.group(0).strip())
+            elif "did you mean" in text.lower():
+                matched_suggestions.append("Did you mean ...")
+
+        if not matched_suggestions:
+            return []
+
+        preview = "; ".join(matched_suggestions)[: self.graphql_config.max_evidence_preview_chars]
+        evidence = [
+            self._evidence(
+                request,
+                response,
+                "GRAPHQL_FIELD_SUGGESTION",
+                "GraphQL engine leaked schema field names via field suggestions ('Did you mean...').",
+                preview,
+                redacted=False,
+            )
+        ]
+        return [
+            self._graphql_result(
+                request,
+                response,
+                payload,
+                confidence=FindingConfidence.HIGH,
+                severity=FindingSeverity.LOW,
+                evidence=evidence,
+                reason="GraphQL field suggestions leak valid schema field names.",
+                category=AttackCategory.INFORMATION_DISCLOSURE,
+                title="GraphQL Field Suggestions Information Disclosure",
+            )
+        ]
+
+
+class GraphQLBooleanSqlInjectionDetector(GraphQLResponseDetector):
+    """Detect boolean-based SQL injection via differential record counts in GraphQL queries."""
+
+    detector_id = "detector_graphql_boolean_sqli"
+    name = "GraphQLBooleanSqlInjectionDetector"
+
+    _boolean_indicators = (
+        "' or '",
+        "' OR '",
+        " or 1=1",
+        " OR 1=1",
+        "yslfuzz_sqli",
+        "yslfuzz_probe",
+    )
+
+    def detect(
+        self,
+        baseline_request: RequestRecord,
+        baseline_response: ResponseRecord,
+        attack_request: RequestRecord,
+        attack_response: ResponseRecord,
+        attack_payload: PayloadCandidate,
+    ) -> list[DetectorResult]:
+        del baseline_request
+        if not self.graphql_config.enable_graphql_boolean_sqli_detection:
+            return []
+        if not self._is_graphql_record(attack_request, attack_payload):
+            return []
+        if attack_payload.attack_category != AttackCategory.SQL_INJECTION:
+            return []
+        if not (self._is_success(baseline_response) and self._is_success(attack_response)):
+            return []
+
+        payload_str = str(attack_payload.body).lower()
+        if not any(ind.lower() in payload_str for ind in self._boolean_indicators):
+            return []
+
+        baseline_data = self._json_body(baseline_response).get("data")
+        attack_data = self._json_body(attack_response).get("data")
+
+        expansions: list[tuple[str, int, int]] = []
+        if isinstance(baseline_data, dict) and isinstance(attack_data, dict):
+            baseline_counts = dict(self._extract_list_counts(baseline_data))
+            attack_counts = dict(self._extract_list_counts(attack_data))
+            for path, attack_count in attack_counts.items():
+                baseline_count = baseline_counts.get(path, 0)
+                if attack_count > baseline_count and (attack_count >= baseline_count + 2 or baseline_count == 0):
+                    expansions.append((path, baseline_count, attack_count))
+        elif isinstance(baseline_data, dict) and attack_response.body_preview and "data" in attack_response.body_preview:
+            baseline_counts = dict(self._extract_list_counts(baseline_data))
+            for path, baseline_count in baseline_counts.items():
+                field = path.split(".")[-1]
+                if field in attack_response.body_preview:
+                    att_approx = attack_response.body_preview.count('"id":') or attack_response.body_preview.count("'id':")
+                    if att_approx > baseline_count and (att_approx >= baseline_count + 2 or baseline_count == 0):
+                        expansions.append((path, baseline_count, att_approx))
+
+        if not expansions:
+            return []
+
+        primary_path, base_cnt, att_cnt = expansions[0]
+        preview = f"path='{primary_path}', baseline_count={base_cnt}, attack_count={att_cnt}"
+        evidence = [
+            self._evidence(
+                attack_request,
+                attack_response,
+                "GRAPHQL_BOOLEAN_SQL_INJECTION",
+                (
+                    f"Injected boolean SQL condition expanded result list from "
+                    f"{base_cnt} to {att_cnt} items under '{primary_path}'."
+                ),
+                preview,
+                redacted=False,
+            )
+        ]
+        return [
+            self._graphql_result(
+                attack_request,
+                attack_response,
+                attack_payload,
+                confidence=FindingConfidence.HIGH,
+                severity=FindingSeverity.HIGH,
+                evidence=evidence,
+                reason="Boolean SQL injection condition expanded query results despite 200 OK status.",
+                category=AttackCategory.SQL_INJECTION,
+                title="Possible Boolean-based SQL Injection in GraphQL Query",
+            )
+        ]
+
+    def _extract_list_counts(self, mapping: Mapping[str, Any], path: str = "data") -> list[tuple[str, int]]:
+        counts: list[tuple[str, int]] = []
+        for key, value in mapping.items():
+            curr = f"{path}.{key}"
+            if isinstance(value, list):
+                counts.append((curr, len(value)))
+            elif isinstance(value, dict):
+                counts.extend(self._extract_list_counts(value, curr))
+        return counts
+
+
 def default_graphql_detectors(config: object | None = None) -> list[ResponseDetector]:
     """Return GraphQL detectors in deterministic order."""
     return [
@@ -678,4 +866,6 @@ def default_graphql_detectors(config: object | None = None) -> list[ResponseDete
         GraphQLAuthorizationConsistencyDetector(config),
         GraphQLInjectionMarkerDetector(config),
         GraphQLSSRFMarkerDetector(config),
+        GraphQLFieldSuggestionDetector(config),
+        GraphQLBooleanSqlInjectionDetector(config),
     ]

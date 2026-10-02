@@ -32,6 +32,8 @@ class AnalysisConfig(YSLFuzzModel):
     enable_graphql_authorization_consistency: bool = True
     enable_graphql_injection_marker_detection: bool = True
     enable_graphql_ssrf_marker_detection: bool = True
+    enable_graphql_field_suggestion_detection: bool = True
+    enable_graphql_boolean_sqli_detection: bool = True
     max_error_messages_to_analyze: int = 10
     max_evidence_preview_chars: int = 300
     response_size_delta_threshold_ratio: float = 0.5
@@ -105,6 +107,12 @@ class AnalysisConfig(YSLFuzzModel):
                 self.enable_graphql_injection_marker_detection
             ),
             "enable_graphql_ssrf_marker_detection": self.enable_graphql_ssrf_marker_detection,
+            "enable_graphql_field_suggestion_detection": (
+                self.enable_graphql_field_suggestion_detection
+            ),
+            "enable_graphql_boolean_sqli_detection": (
+                self.enable_graphql_boolean_sqli_detection
+            ),
             "max_error_messages_to_analyze": self.max_error_messages_to_analyze,
             "max_evidence_preview_chars": self.max_evidence_preview_chars,
             "response_size_delta_threshold_ratio": self.response_size_delta_threshold_ratio,

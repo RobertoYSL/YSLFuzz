@@ -23,6 +23,7 @@ class GraphQLPayloadConfig(YSLFuzzModel):
     inline_literals: bool = False
     include_typename: bool = False
     max_input_depth: int = 3
+    default_pagination_limit: int | None = None
 
     @property
     def seed(self) -> int:

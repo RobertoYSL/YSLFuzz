@@ -191,7 +191,7 @@ class HttpExecutor:
     def _body_preview(self, body: bytes) -> str | None:
         if not body:
             return None
-        preview = body[:1024].decode("utf-8", errors="replace")
+        preview = body[:16384].decode("utf-8", errors="replace")
         for marker in ("authorization", "api_key", "apikey", "jwt", "password", "secret", "token"):
             if marker in preview.lower():
                 return "[REDACTED]"
