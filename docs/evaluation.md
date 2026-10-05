@@ -18,16 +18,20 @@ A ground-truth file describes a lab target and expected vulnerabilities:
 
 ```json
 {
-  "lab_id": "simple-users",
-  "lab_name": "Simple Users",
+  "lab_id": "owasp-crapi",
+  "lab_name": "OWASP crAPI Benchmark Lab",
   "lab_version": "1.0.0",
-  "target_name": "Simple Users API",
-  "target_base_url": "http://localhost:8000",
-  "api_style": "rest",
-  "expected_endpoints": ["/users"],
+  "target_name": "crAPI",
+  "target_base_url": "http://127.0.0.1:8888",
+  "api_style": "REST",
+  "expected_endpoints": ["/community/api/v2/community/posts", "..."],
   "expected_vulnerabilities": []
 }
 ```
+
+Predefined ground-truth datasets are provided in `examples/evaluation/`:
+- `crapi_ground_truth.json`: Official OWASP crAPI benchmark mapping 13 challenges (BOLA, broken auth, excessive data exposure, mass assignment, SSRF, NoSQLi, SQLi).
+- `simple_users_ground_truth.json`: Minimal mock lab ground truth for deterministic test suites.
 
 Expected vulnerabilities include endpoint path, method, attack category, expected severity,
 affected parameter metadata, and description fields.

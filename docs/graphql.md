@@ -9,12 +9,11 @@ Supported inputs:
 
 - SDL files such as `examples/graphql/simple_users_schema.graphql`.
 - Local introspection JSON files such as `examples/graphql/simple_users_introspection.json`.
-
-YSLFuzz does not perform live remote introspection as a discovery step.
+- Live remote GraphQL endpoints via HTTP/HTTPS URL (e.g. `http://localhost:5013/graphql`), where YSLFuzz executes a standard introspection query.
 
 ## Discovery
 
-GraphQL discovery parses the local schema and builds internal metadata for operation roots,
+GraphQL discovery parses the schema (from local file or remote endpoint) and builds internal metadata for operation roots,
 fields, arguments, input objects, enums, scalar types, and schema identifiers. Discovery
 results feed payload generation and reporting.
 
@@ -74,45 +73,39 @@ uv run yslfuzz scan \
 ## Boundary, Invalid, Mutated, and Attack Payloads
 
 GraphQL non-valid payloads derive from valid payloads and preserve lineage through
-`parent_payload_id`. Generation is disabled unless requested with payload flags such as
-`--include-boundary-payloads`, `--include-invalid-payloads`, `--include-mutated-payloads`, or
-`--include-attack-payloads`.
-
-Execution gates are unchanged:
-
-- mutation payload execution requires mutation authorization flags;
-- attack payload execution requires attack authorization flags;
-- dry-run prevents all execution.
+`parent_payload_id`. Generation is configured directly or via scan presets:
+- `--preset quick`: executes valid baseline GraphQL operations.
+- `--preset deep` / `--preset full`: enables boundary edge cases, variable mutations, safe attack-classified probes, and advanced oracles.
+- Interactive safety prompt protects active fuzzing unless `-y` / `--yes` is supplied.
 
 ## Safe Attack-Classified Probes
 
 GraphQL attack-classified probes use inert YSLFuzz markers only. Category coverage includes
 input validation, information disclosure, reflection, mass assignment, broken access control
-metadata support, SQL marker handling, NoSQL marker handling, command marker handling, and
+metadata support, SQL boolean differential probes, NoSQL marker handling, command marker handling, and
 SSRF marker handling.
-
-The SQL, NoSQL, command, and SSRF categories are marker-based. YSLFuzz does not generate real
-injection strings, command execution payloads, internal network probes, or cloud metadata
-probes.
 
 Introspection probes are disabled by default and require explicit opt-in with
 `--graphql-include-introspection-probe` or matching configuration.
 
-## GraphQL Analysis
+## GraphQL Analysis and Advanced Oracles
 
-GraphQL analysis is conservative and signal-based. Detectors include:
+GraphQL analysis is signal-based and includes specialized oracles:
 
-- possible GraphQL error disclosure;
-- possible validation bypass;
-- possible introspection exposure from already executed probes;
-- inert marker reflection;
-- possible mass assignment signal;
-- authorization consistency signal when paired metadata exists;
-- inert injection marker signal;
-- inert SSRF marker signal.
-
-Findings are low or medium confidence signals unless strong deterministic evidence exists.
-They are not proof of confirmed vulnerabilities.
+- **Field Suggestion Leakage (`GraphQLFieldSuggestionDetector`)**: Sends controlled typographical
+  errors in field and operation names to test whether the GraphQL engine leaks internal schema
+  structure via "Did you mean..." suggestions when introspection is disabled.
+- **Boolean SQL Injection Differential Oracle (`GraphQLBooleanSqlInjectionDetector`)**: In GraphQL,
+  SQL injections on queries often do not crash or return HTTP 500, but return HTTP 200 OK while
+  expanding the result set. This oracle injects an inert boolean condition (`' OR 'yslfuzz_probe'='yslfuzz_probe`)
+  and compares the cardinality of records returned in `data.<field>` against the baseline response.
+- **Pagination Limit Control (`--graphql-pagination-limit`)**: Allows setting collection query
+  limits (default: 50) so differential record expansion can be observed reliably.
+- **Error Disclosure (`GraphQLErrorDisclosureDetector`)**: Flags verbose internal server errors,
+  stack traces, or database dialect identifiers in GraphQL response errors.
+- **Validation Bypass (`GraphQLValidationBypassDetector`)**: Flags successful responses to invalid
+  scalar types or missing required non-null arguments.
+- **Marker Reflection (`GraphQLReflectionDetector`)**: Flags reflection of inert fuzzing probes.
 
 ## Configuration
 
@@ -129,6 +122,7 @@ graphql:
   include_queries: true
   include_mutations: true
   include_introspection_probe: false
+  pagination_limit: 50
 
 execution:
   dry_run: true
@@ -136,15 +130,12 @@ execution:
 
 ## Limits and Prohibitions
 
-Current GraphQL support does not include:
+Current GraphQL support intentionally does not include:
 
-- DoS-style deep queries;
+- DoS-style deep recursive queries;
 - alias or fragment explosion;
 - batching abuse;
-- subscriptions;
-- WebSocket execution;
+- subscriptions / WebSocket execution;
 - multipart upload;
 - GET-based GraphQL execution;
-- live remote introspection discovery;
-- authentication bypass testing;
-- credential mutation.
+- operational SQL/OS injection exploit payloads.

@@ -5,32 +5,34 @@ YSLFuzz is organized as a set of small layers around shared Pydantic models.
 ## Layers
 
 - `yslfuzz.discovery`: REST/OpenAPI discovery and schema normalization.
-- `yslfuzz.discovery.graphql`: GraphQL SDL and introspection JSON discovery.
+- `yslfuzz.discovery.graphql`: GraphQL SDL, local introspection JSON, and live remote schema loading.
+- `yslfuzz.dependency`: Endpoint producer-consumer dependency graph analysis and stateful workflow builder.
 - `yslfuzz.payloads`: REST valid, boundary, invalid, mutated, and attack payload generation.
 - `yslfuzz.payloads.graphql`: GraphQL operation, variable, selection, mutation, and safe marker generation.
-- `yslfuzz.execution`: HTTP request building, execution, budgets, retry, rate limiting, and progress tracking.
+- `yslfuzz.execution`: HTTP request building, execution engine, stateful `WorkflowExecutor`, rate limiting, and stability controls.
 - `yslfuzz.execution.graphql`: GraphQL JSON POST request building and execution integration.
-- `yslfuzz.auth`: environment-variable-based authentication profiles and redaction support.
-- `yslfuzz.analysis`: REST and generic response detectors.
-- `yslfuzz.analysis.graphql`: GraphQL-specific conservative detectors.
-- `yslfuzz.reporting`: redacted JSON reports and minimal Markdown rendering.
-- `yslfuzz.evaluation`: ground-truth matching and metric exports.
-- `yslfuzz.benchmark`: repeatable benchmark job orchestration.
-- `yslfuzz.labs`: local lab manifest loading and validation.
+- `yslfuzz.auth`: Static auth profiles, dynamic pre-scan login lifecycle, multi-user identity switching, and redaction.
+- `yslfuzz.analysis`: Multi-layered oracles (BaselineCrashDetector, SchemaConformanceDetector, DifferentialResponseDetector, BasicAuthorizationBypassDetector).
+- `yslfuzz.analysis.graphql`: GraphQL-specific oracles (GraphQLFieldSuggestionDetector, GraphQLBooleanSqlInjectionDetector, error disclosure).
+- `yslfuzz.reporting`: Redacted JSON reports, executive Markdown rendering (`--markdown`), and terminal summary table.
+- `yslfuzz.evaluation`: Ground-truth matching (`FindingMatcher`) and metric calculation/exports.
+- `yslfuzz.benchmark`: Repeatable benchmark job orchestration.
+- `yslfuzz.labs`: Local lab manifest loading and validation.
 - `yslfuzz.config`: JSON/YAML scan profile loading and CLI merge behavior.
-- `yslfuzz.cli`: command-line entry points.
+- `yslfuzz.cli.commands`: Modular CLI controllers (`scan.py`, `evaluate.py`, `benchmark.py`, `labs.py`, `graphql.py`).
 
 ## Data Flow
 
 ```text
 OpenAPI / GraphQL schema
   -> internal schema model
+  -> dependency graph & stateful workflows
   -> PayloadCandidate
-  -> RequestRecord
+  -> RequestRecord (with auth lifecycle injection)
   -> ResponseRecord
-  -> DetectorResult
+  -> DetectorResult (crash, conformance, differential, BOLA oracles)
   -> SecurityFinding
-  -> JSON report / evaluation exports
+  -> Redacted JSON report / Executive Markdown / Evaluation exports
 ```
 
 ## Safety Boundaries

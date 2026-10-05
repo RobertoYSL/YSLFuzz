@@ -17,13 +17,23 @@ Commands:
 
 ## scan
 
+Scan Presets:
+
+- `--preset {quick,standard,deep,full}`: Selects an automated intensity preset:
+  - `quick`: Stateless sanity check (valid baseline payloads only).
+  - `standard`: Stateful baseline fuzzing, dependency-graph workflows, and schema conformance testing.
+  - `deep`: Full active fuzzing (stateful workflows, mutations, attacks, BOLA multi-user differential checks, all oracles).
+  - `full`: Exhaustive fuzzing with expanded attack payload budgets.
+- `--yes`, `-y`: Automatically answer yes to the interactive confirmation prompt for active fuzzing.
+
 Target inputs:
 
 - `--config PATH`: load a JSON/YAML scan configuration profile.
 - `--openapi PATH`: local OpenAPI YAML/JSON file.
-- `--graphql-schema PATH`: local GraphQL SDL or local introspection JSON file.
+- `--graphql-schema PATH_OR_URL`: local GraphQL SDL file, local introspection JSON file, or live remote GraphQL endpoint (`http://...`).
 - `--base-url URL`: target base URL.
 - `--output PATH`: JSON report path.
+- `--markdown PATH`: executive Markdown report path.
 
 `--openapi` and `--graphql-schema` are mutually exclusive.
 
@@ -31,9 +41,13 @@ General execution:
 
 - `--max-requests INT`
 - `--timeout FLOAT`
-- `--allow-destructive`
-- `--dry-run`
-- `--verbose`
+- `--allow-destructive`: allow execution of `PUT`, `PATCH`, and `DELETE` endpoints.
+- `--dry-run`: plan payloads and requests without sending network traffic.
+- `--verbose`: print detailed progress information.
+
+Stateful Workflows:
+
+- `--stateful`, `--enable-workflows`: enable stateful workflow execution derived from the OpenAPI dependency graph (auto-enabled in `standard`, `deep`, `full` presets).
 
 Payload modes:
 
@@ -53,25 +67,34 @@ Payload modes:
 
 Execution gates:
 
-- `--execute-mutations`
-- `--i-understand-mutation-execution-is-authorized`
-- `--execute-attacks`
-- `--i-understand-this-is-authorized`
+- `--execute-mutations`: allow sending mutated payload requests (prompted for confirmation unless `-y` is supplied).
+- `--execute-attacks`: allow sending inert attack probe requests (prompted for confirmation unless `-y` is supplied).
 
 Authentication:
 
-- `--auth-bearer-env ENV_VAR`
-- `--auth-api-key-env ENV_VAR`
-- `--auth-api-key-header HEADER_NAME`
-- `--auth-cookie-env ENV_VAR`
-- `--auth-cookie-name COOKIE_NAME`
-- `--auth-header HEADER_NAME:ENV_VAR`
+- `--auth-bearer-env ENV_VAR`: Bearer token environment variable.
+- `--auth-api-key-env ENV_VAR`: API key environment variable.
+- `--auth-api-key-header HEADER_NAME`: Header name for API key (default: `X-API-Key`).
+- `--auth-cookie-env ENV_VAR`: Cookie value environment variable.
+- `--auth-cookie-name COOKIE_NAME`: Cookie name for session.
+- `--auth-header HEADER_NAME:ENV_VAR`: Arbitrary header mapping.
+- `--auth-user2-bearer-env ENV_VAR`: Second user Bearer token env var for multi-user BOLA/IDOR differential testing.
+- `--enable-bola-check`: Enable BOLA multi-user differential oracle (auto-enabled when `--auth-user2-bearer-env` is provided).
 
-Analysis:
+Dynamic Authentication Lifecycle:
 
-- `--no-deduplicate-findings`
-- `--disable-detector DETECTOR_ID`
-- `--analysis-min-confidence CONFIDENCE`
+- `--auth-login-url URL`: Endpoint URL to automatically authenticate before scanning.
+- `--auth-login-payload JSON`: Static JSON body for login request.
+- `--auth-login-user-env ENV_VAR`: Environment variable containing login username/email.
+- `--auth-login-pass-env ENV_VAR`: Environment variable containing login password.
+- `--auth-token-field FIELD`: JSON property path to extract authentication token from (default: `token`).
+- `--auth-token-type TYPE`: Authorization header prefix (default: `Bearer`).
+
+Analysis & Oracles:
+
+- `--no-deduplicate-findings`: do not group repeated findings by fingerprint.
+- `--disable-detector DETECTOR_ID`: disable a specific detector.
+- `--analysis-min-confidence CONFIDENCE`: filter findings by minimum confidence level (`LOW`, `MEDIUM`, `HIGH`, `CONFIRMED`).
 
 GraphQL:
 
@@ -84,6 +107,7 @@ GraphQL:
 - `--graphql-endpoint PATH`
 - `--graphql-max-requests INT`
 - `--graphql-include-introspection-probe`
+- `--graphql-pagination-limit INT`: limit parameter value for list/collection queries (default: 50).
 
 Stability:
 

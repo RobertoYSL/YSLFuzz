@@ -20,18 +20,21 @@ explicitly allowed. This is separate from mutation payload execution.
 
 ## Mutation and Attack Execution Gates
 
-Mutation payload execution requires:
+Active fuzzing involves generating edge-case mutations and attack probes that could alter
+server state or produce unexpected errors. YSLFuzz enforces clear execution boundaries:
 
-- `--execute-mutations`
-- `--i-understand-mutation-execution-is-authorized`
+1. **Preset-driven Execution**: When running with `--preset deep` or `--preset full` (or with explicit
+   `--execute-mutations` / `--execute-attacks`), the CLI checks if active fuzzing is enabled.
+2. **Interactive Confirmation Prompt**: If active fuzzing is requested, YSLFuzz displays a warning
+   banner detailing what actions will be performed (e.g. sending boundary values, injection probes,
+   and stateful mutations) and prompts for confirmation:
+   ```text
+   Proceed with active fuzzing? [y/N]:
+   ```
+3. **Automated Runs (`--yes` / `-y`)**: In automated test suites, CI/CD pipelines, or benchmark
+   workflows, supply `--yes` or `-y` to automatically confirm authorization.
 
-Attack payload execution requires:
-
-- `--execute-attacks`
-- `--i-understand-this-is-authorized`
-
-`--execute-mutations` does not imply `--execute-attacks`, and `--execute-attacks` does not
-imply `--execute-mutations`.
+`--execute-mutations` and `--execute-attacks` can also be toggled independently in custom scan configs.
 
 ## Request Budgets and Stability
 

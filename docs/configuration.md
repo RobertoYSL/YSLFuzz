@@ -100,23 +100,19 @@ Important payload fields include:
 
 Non-valid payload generation is disabled by default.
 
-## Execution Gates
+## Presets and Execution Gates
 
-Mutation payload execution requires:
-
-```yaml
-execution:
-  execute_mutations: true
-  i_understand_mutation_execution_is_authorized: true
-```
-
-Attack payload execution requires:
+Configuration profiles can specify scan intensity presets:
 
 ```yaml
 execution:
-  execute_attacks: true
-  i_understand_attack_execution_is_authorized: true
+  preset: deep
+  dry_run: false
+  allow_destructive: false
 ```
+
+When active fuzzing is enabled (`execute_mutations: true` or `execute_attacks: true`), the CLI
+prompts for confirmation interactively unless `--yes` / `-y` is supplied at runtime.
 
 Dry-run still prevents all HTTP execution.
 

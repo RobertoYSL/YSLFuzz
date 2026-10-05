@@ -2,16 +2,14 @@
 
 YSLFuzz is an evolving research-oriented API fuzzing tool. Current limitations include:
 
-- OpenAPI support covers the subset needed by current discovery, payload generation, and execution.
-- GraphQL support focuses on local SDL and local introspection JSON inputs, not live remote introspection.
-- GraphQL execution uses JSON POST requests only.
-- GraphQL batching, subscriptions, WebSockets, and multipart upload are not supported.
-- Attack-classified SQL, NoSQL, command, and SSRF coverage uses inert markers only.
-- Analysis is conservative and signal-based. It is not proof of a confirmed vulnerability.
-- OAuth browser flows, token refresh, and browser automation are not implemented.
-- Query-string credentials are intentionally not documented as a supported auth mode.
+- OpenAPI support covers the subset needed by current discovery, payload generation, stateful workflows, and execution.
+- GraphQL supports local SDL, local introspection JSON, and live remote introspection via HTTP.
+- GraphQL execution uses JSON POST requests only; WebSocket subscriptions, batching, and multipart uploads are not supported.
+- Attack-classified probes use safe, inert markers only. YSLFuzz does not generate operational exploit payloads.
+- Analysis is signal-based and conservative. It is not proof of a confirmed vulnerability without manual verification.
+- Interactive OAuth browser flows and browser automation are not supported.
+- Query-string credentials are intentionally not supported as an auth mode to prevent credential leakage in URLs.
 - Persistent resume, distributed scanning, and multi-process execution are not implemented.
-- HTML report finalization and advanced Markdown report finalization are not documented as complete.
-- CI/CD, packaging automation, and release automation are not documented as complete.
-- Third-party baseline comparison and thesis experiment orchestration are outside the core product.
+- Executive Markdown (`--markdown`) and JSON reports are supported; interactive HTML dashboards are not implemented.
+- Third-party baseline comparison and thesis experiment orchestration are handled externally.
 - YSLFuzz does not replace manual security review.

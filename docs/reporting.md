@@ -29,17 +29,41 @@ Reports may include:
 - GraphQL detector summaries;
 - stability summaries such as skipped request counts and retry counts.
 
+## Executive Markdown Reports
+
+YSLFuzz can generate an executive Markdown report alongside the JSON report using `--markdown PATH`:
+
+```bash
+uv run yslfuzz scan \
+  --openapi examples/openapi/simple_users_api.yaml \
+  --base-url http://localhost:8000 \
+  --preset deep \
+  -y \
+  --output reports/scan_report.json \
+  --markdown reports/scan_report.md
+```
+
+The Markdown report provides an executive overview formatted for review:
+- Target and scan metadata (scan run ID, target URL, API style).
+- Severity breakdown table (CRITICAL, HIGH, MEDIUM, LOW, INFO).
+- Endpoint summary table with request counts, finding counts, and highest severity per endpoint.
+- Grouped finding sections with confidence levels, attack categories, triggering detectors, and syntax-highlighted evidence previews.
+
+## Terminal Summary
+
+At the end of every scan execution, YSLFuzz prints a concise summary banner to the console:
+- Target base URL and execution mode.
+- Tested endpoints, executed requests, and payload distribution.
+- Workflow execution results and propagated dynamic parameters.
+- Finding totals by severity.
+- Top vulnerable endpoints highlighted with their respective severities.
+
 ## Redaction
 
 Reports redact authentication headers, cookies, sensitive payload values, and environment-
 derived material. Do not store real secrets in config files or example reports.
 
-## Markdown
-
-A minimal Markdown renderer exists in the reporting package for library use. The scan CLI
-currently documents JSON as the main report output format.
-
 ## Limitations
 
-HTML report finalization and advanced Markdown report polishing are not documented as
-completed product features.
+Interactive HTML reports and visual dashboard rendering are not current core features.
+The primary outputs remain reproducible, machine-readable JSON and human-readable Markdown.

@@ -10,14 +10,15 @@ work only. Do not run it against systems you do not have permission to test.
 ## Currently Supported
 
 - REST/OpenAPI discovery from local OpenAPI YAML or JSON files.
-- GraphQL discovery from local SDL files and local introspection JSON files.
+- GraphQL discovery from local SDL files, local introspection JSON files, or live remote endpoints (`http://...`).
+- Scan intensity presets (`quick`, `standard`, `deep`, `full`) for automated configuration.
+- Stateful workflow execution derived from OpenAPI dependency graphs (producer-to-consumer ID/token propagation).
 - Valid, boundary, invalid, mutated, and safe attack-classified payload generation.
-- GraphQL valid payloads, GraphQL execution, safe marker probes, and signal-based GraphQL analysis.
-- Authentication profiles using environment variable references.
-- Scan configuration profiles in JSON or YAML.
-- Dry-run mode, request budgets, rate limiting, retry/backoff controls, and progress snapshots.
-- Redacted JSON scan reports.
-- Ground-truth evaluation utilities, benchmark runs, and local lab pack metadata.
+- Advanced oracles: Baseline Crash Detector (unhandled 500s), Schema Conformance Detector, and Multi-User BOLA/IDOR Differential Testing.
+- GraphQL advanced oracles: Field Suggestion Leakage ("Did you mean...") and Boolean SQL Injection differential record-expansion.
+- Authentication profiles (Bearer, API Key, Cookie, Custom Headers) and dynamic pre-scan authentication lifecycle.
+- Redacted JSON scan reports and executive Markdown reports (`--markdown`).
+- Ground-truth evaluation utilities (`yslfuzz evaluate`), benchmark runs, and local lab pack metadata.
 
 YSLFuzz intentionally uses inert markers for attack-classified probes. It does not ship a
 real exploit payload library.
@@ -36,38 +37,53 @@ See [Installation](docs/installation.md) for details and troubleshooting.
 
 ## Quickstart
 
-REST/OpenAPI dry-run:
+REST scan with presets:
 
 ```bash
+# Quick stateless sanity check
 uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --dry-run \
-  --output reports/rest_dry_run.json
-```
+  --preset quick \
+  --output reports/rest_quick.json
 
-GraphQL dry-run:
-
-```bash
-uv run yslfuzz scan \
-  --graphql-schema examples/graphql/simple_users_schema.graphql \
-  --base-url http://localhost:8000 \
-  --dry-run \
-  --output reports/graphql_dry_run.json
-```
-
-Safe attack-classified payload generation in dry-run:
-
-```bash
+# Standard scan with stateful workflows and schema conformance
 uv run yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
-  --include-attack-payloads \
-  --dry-run \
-  --output reports/attack_generation.json
+  --preset standard \
+  --output reports/rest_standard.json
+
+# Deep active fuzzing (mutations, attacks, oracles) with executive Markdown report
+uv run yslfuzz scan \
+  --openapi examples/openapi/simple_users_api.yaml \
+  --base-url http://localhost:8000 \
+  --preset deep \
+  -y \
+  --output reports/rest_deep.json \
+  --markdown reports/rest_deep.md
 ```
 
-Dry-run builds payloads and planned requests but does not send HTTP traffic.
+GraphQL scan (local schema or live endpoint):
+
+```bash
+# Live remote GraphQL endpoint
+uv run yslfuzz scan \
+  --graphql-schema http://localhost:5013/graphql \
+  --preset deep \
+  -y \
+  --output reports/graphql_deep.json \
+  --markdown reports/graphql_deep.md
+```
+
+Evaluation against ground truth:
+
+```bash
+uv run yslfuzz evaluate \
+  --report reports/rest_deep.json \
+  --ground-truth examples/evaluation/crapi_ground_truth.json \
+  --output-dir reports/evaluation
+```
 
 ## CLI
 
@@ -84,12 +100,11 @@ See [CLI Reference](docs/cli.md).
 
 YSLFuzz keeps risky behavior opt-in:
 
-- Dry-run is supported and should be the first mode used on a target.
-- Destructive REST methods require `--allow-destructive`.
-- Mutation payload execution requires `--execute-mutations` and an authorization acknowledgement.
-- Attack payload execution requires `--execute-attacks` and an authorization acknowledgement.
-- Request budgets, endpoint budgets, rate limiting, retry bounds, and global scan duration limits are available.
-- Authentication material is read from environment variables and redacted in reports.
+- Dry-run mode (`--dry-run`) validates schemas and payloads without sending HTTP traffic.
+- Interactive confirmation prompt (`[y/N]`) protects active mutation and attack scans (auto-confirmed with `-y` / `--yes`).
+- Destructive REST methods (`DELETE`, `PUT`, `PATCH`) require `--allow-destructive`.
+- Request budgets, endpoint budgets, rate limiting, retry bounds, and global scan duration limits keep scans stable.
+- Authentication credentials and sensitive payload fields are strictly redacted in logs, reports, and console outputs.
 
 See [Execution Safety](docs/execution_safety.md).
 
@@ -124,6 +139,6 @@ outside the core product.
 
 YSLFuzz is not a replacement for manual security review. Analysis is conservative and
 signal-based. GraphQL safe SQL, NoSQL, command, and SSRF category coverage uses inert
-markers only. OAuth login flows, browser automation, live remote introspection, WebSocket
-subscriptions, multipart GraphQL upload, persistent resume, and release automation are not
+markers only. OAuth browser flows, browser automation, WebSocket subscriptions,
+multipart GraphQL upload, persistent resume, and release automation are not
 current core features.
