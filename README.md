@@ -4,8 +4,8 @@ YSLFuzz is a schema-aware fuzzer for authorized REST/OpenAPI and GraphQL API tes
 It turns local API schemas into deterministic payloads, optional HTTP requests, conservative
 analysis results, and redacted JSON reports.
 
-YSLFuzz is intended for local labs, owned services, and explicitly authorized assessment
-work only. Do not run it against systems you do not have permission to test.
+> [!IMPORTANT]
+> **Legal & Ethical Disclaimer**: YSLFuzz is designed exclusively for authorized security research, educational labs, local development environments, and systems where explicit, written authorization has been granted by the owner. Unauthorized scanning or probing of remote APIs and networks is illegal. The author(s) and contributors assume no liability for misuse, damages, or legal consequences resulting from the use of this software.
 
 ## Currently Supported
 
@@ -23,39 +23,72 @@ work only. Do not run it against systems you do not have permission to test.
 YSLFuzz intentionally uses inert markers for attack-classified probes. It does not ship a
 real exploit payload library.
 
-## Install
+## Installation
 
-Use Python 3.12. During development, run commands through `uv` from the repository root:
+YSLFuzz requires **Python 3.12+**. Once installed, the standalone `yslfuzz` executable is available globally from any terminal directory.
+
+### Recommended: Standalone CLI (via `pipx` or `uv tool`)
+
+Install directly from the public GitHub repository into an isolated environment without dependency conflicts:
 
 ```bash
+# Using pipx (recommended for Python CLI tools):
+pipx install git+https://github.com/RobertoYSL/YSLFuzz.git
+
+# Or using uv:
+uv tool install git+https://github.com/RobertoYSL/YSLFuzz.git
+```
+
+Verify that `yslfuzz` is accessible anywhere on your system:
+
+```bash
+yslfuzz --help
+```
+
+### Option B: Local Clone & Install
+
+```bash
+git clone https://github.com/RobertoYSL/YSLFuzz.git
+cd YSLFuzz
+pip install .
+```
+
+### Option C: Development Setup
+
+For local development, testing, and contributions:
+
+```bash
+git clone https://github.com/RobertoYSL/YSLFuzz.git
+cd YSLFuzz
 uv sync
-uv run yslfuzz --help
 uv run pytest
 ```
 
-See [Installation](docs/installation.md) for details and troubleshooting.
+See [Installation Guide](docs/installation.md) for PATH setup, shell completion, and troubleshooting.
 
 ## Quickstart
+
+*(Note: If running directly from a development checkout without global installation, prefix commands with `uv run yslfuzz ...`)*
 
 REST scan with presets:
 
 ```bash
 # Quick stateless sanity check
-uv run yslfuzz scan \
+yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
   --preset quick \
   --output reports/rest_quick.json
 
 # Standard scan with stateful workflows and schema conformance
-uv run yslfuzz scan \
+yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
   --preset standard \
   --output reports/rest_standard.json
 
 # Deep active fuzzing (mutations, attacks, oracles) with executive Markdown report
-uv run yslfuzz scan \
+yslfuzz scan \
   --openapi examples/openapi/simple_users_api.yaml \
   --base-url http://localhost:8000 \
   --preset deep \
@@ -68,7 +101,7 @@ GraphQL scan (local schema or live endpoint):
 
 ```bash
 # Live remote GraphQL endpoint
-uv run yslfuzz scan \
+yslfuzz scan \
   --graphql-schema http://localhost:5013/graphql \
   --preset deep \
   -y \
@@ -79,7 +112,7 @@ uv run yslfuzz scan \
 Evaluation against ground truth:
 
 ```bash
-uv run yslfuzz evaluate \
+yslfuzz evaluate \
   --report reports/rest_deep.json \
   --ground-truth examples/evaluation/crapi_ground_truth.json \
   --output-dir reports/evaluation
@@ -142,3 +175,8 @@ signal-based. GraphQL safe SQL, NoSQL, command, and SSRF category coverage uses 
 markers only. OAuth browser flows, browser automation, WebSocket subscriptions,
 multipart GraphQL upload, persistent resume, and release automation are not
 current core features.
+
+## License
+
+This project is licensed under the [Apache License, Version 2.0](LICENSE).
+
